@@ -104,7 +104,7 @@ class beampark_radar:
         good_times = n.where(angles < threshold_angle)[0]
 
         if len(good_times) < 2:
-            return(None)
+            return(n.array([],dtype=n.int))
 
         end_idx0=n.where(n.diff(t[good_times]) > dt_coarse)[0]
         end_idx = n.concatenate((end_idx0,[len(good_times)-1]))
@@ -120,40 +120,31 @@ class beampark_radar:
             
 
 
-def test_pass():
-
-    # create a space object
-    obj = SpaceObject(
-        Kepler,
-        propagator_options = options,
-        a = 7000e3, 
-        e = 0.0, 
-        i = 69, 
-        raan = 0, 
-        aop = 0, 
-        mu0 = 0, 
-        epoch = Time("2019-06-01T00:00:00Z"), # utc date for epoch
-        parameters = dict(
-            d = 0.2,
-        )
-    )
+def test_pass(obj):
 
     # create a radar
     radar=beampark_radar()
+
+
     t_hr=radar.find_passes(obj,t0=0,t1=24*3600,dt_coarse=10.0)
 
     # this gives you the state vector of the space object at times t
     t = n.arange(0,24*3600,10)
     states = obj.get_state(t)
-    states_hr = obj.get_state(t_hr)    
+
+    if len(t_hr)>0:
+        states_hr = obj.get_state(t_hr)    
     
     angles=radar.get_on_axis_angle(states)
-    angles_hr=radar.get_on_axis_angle(states_hr)    
+    
+    if len(t_hr)>0:    
+        angles_hr=radar.get_on_axis_angle(states_hr)    
 
     plt.plot(t,180.0*angles/n.pi,".")
-    plt.plot(t_hr,180.0*angles_hr/n.pi,".")    
+    if len(t_hr)>0:    
+        plt.plot(t_hr,180.0*angles_hr/n.pi,".")    
     plt.xlabel("Time (seconds since epoch)")
-    plt.ylabel("On-axis angle (deg)")
+    plt.ylabel("rOn-axis angle (deg)")
     plt.show()
     
     ranges,range_rates=radar.get_range_and_range_rate(states)
@@ -161,17 +152,19 @@ def test_pass():
     range_rate_km=range_rates/1e3
     plt.plot(t,range_km,".")
 
-    ranges_hr,range_rates_hr=radar.get_range_and_range_rate(states_hr)
-    range_km_hr=ranges_hr/1e3
-    range_rate_km_hr=range_rates_hr/1e3
-    plt.plot(t_hr,range_km_hr,".")
+    if len(t_hr)>0:        
+        ranges_hr,range_rates_hr=radar.get_range_and_range_rate(states_hr)
+        range_km_hr=ranges_hr/1e3
+        range_rate_km_hr=range_rates_hr/1e3
+        plt.plot(t_hr,range_km_hr,".")
     
     plt.xlabel("Time (seconds since epoch)")
     plt.ylabel("Range (km)")
     plt.show()
     
     plt.plot(t,range_rate_km,".")
-    plt.plot(t_hr,range_rate_km_hr,".")    
+    if len(t_hr)>0:    
+        plt.plot(t_hr,range_rate_km_hr,".")    
     # compare numerical derivative of range with analytic range-rate
     plt.plot(0.5*(t[0:len(t)-1]+t[1:len(t)]),n.diff(range_km)/10.0,"x")    
     plt.xlabel("Time (seconds since epoch)")
@@ -181,18 +174,47 @@ def test_pass():
 
 
 
-def plot_3d_orbit():
+def plot_3d_orbit(obj):
     """
     plot position of space object when it is "close" to the on axis position
     """
 
     # create a space object
+    radar=beampark_radar()
+    t_hr=radar.find_passes(obj,t0=0,t1=24*3600)
+    t_lr=n.arange(0,24*3600,20)
+    # high resolution close to zero on-axis angles only
+    
+    # low time resolution
+    states_lr = obj.get_state(t_lr)        
+    
+    fig = plt.figure(figsize=(15,15))
+    ax = fig.add_subplot(111, projection='3d')
+    ax.plot(states_lr[0,:], states_lr[1,:], states_lr[2,:],".")
+
+    if len(t_hr)>0:
+        states = obj.get_state(t_hr)
+        ax.plot(states[0,:], states[1,:], states[2,:],".")
+    
+        ax.plot([radar.loc[0],radar.loc[0]+radar.k[0]*2000e3],
+                [radar.loc[1],radar.loc[1]+radar.k[1]*2000e3],
+                [radar.loc[2],radar.loc[2]+radar.k[2]*2000e3],color="red")
+        
+        max_range = np.linalg.norm(states[0:3,0])*2
+        
+        ax.set_xlim(-max_range, max_range)
+        ax.set_ylim(-max_range, max_range)
+        ax.set_zlim(-max_range, max_range)
+    plt.show()
+
+
+if __name__ == "__main__":
     obj = SpaceObject(
         Kepler,
         propagator_options = options,
         a = 7000e3, 
         e = 0.0, 
-        i = 69, 
+        i = 74, 
         raan = 0, 
         aop = 0, 
         mu0 = 0, 
@@ -201,30 +223,6 @@ def plot_3d_orbit():
             d = 0.2,
         )
     )
-    radar=beampark_radar()
-    t_hr=radar.find_passes(obj,t0=0,t1=24*3600)
-    t_lr=n.arange(0,24*3600,20)
-    # high resolution close to zero on-axis angles only
-    states = obj.get_state(t_hr)
-    # low time resolution
-    states_lr = obj.get_state(t_lr)        
     
-    fig = plt.figure(figsize=(15,15))
-    ax = fig.add_subplot(111, projection='3d')
-    ax.plot(states_lr[0,:], states_lr[1,:], states_lr[2,:],".")    
-    ax.plot(states[0,:], states[1,:], states[2,:],".")
-    
-    ax.plot([radar.loc[0],radar.loc[0]+radar.k[0]*2000e3],
-            [radar.loc[1],radar.loc[1]+radar.k[1]*2000e3],
-            [radar.loc[2],radar.loc[2]+radar.k[2]*2000e3],color="red")
-    max_range = np.linalg.norm(states[0:3,0])*2
-    
-    ax.set_xlim(-max_range, max_range)
-    ax.set_ylim(-max_range, max_range)
-    ax.set_zlim(-max_range, max_range)
-    plt.show()
-
-
-if __name__ == "__main__":
-    test_pass()
-    plot_3d_orbit()
+    test_pass(obj)
+    plot_3d_orbit(obj)
