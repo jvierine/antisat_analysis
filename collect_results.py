@@ -75,20 +75,21 @@ def plot_data(fname):
     h=h5py.File(fname,"r")
     v=h["v"][()]
     t=h["t"][()]
+    rgs=h["r"][()]    
     snr=h["snr"][()]
     dur=h["dur"][()]        
     
-    t0s=n.array(t0s)
-    t0=t0s-n.min(t0s)
+    t0s=n.array(t)
+    t0=t0s-n.min(t)
     
     # info on i and a
     H,x,y=n.histogram2d(v,rgs,range=[[-3,3],[0,3000]],bins=(100,100))
     
     plt.subplot(121)
-    cdops=n.copy(vdops)
+    cdops=n.copy(v)
     cdops[cdops>4]=4
     cdops[cdops<-4]=-4
-    plt.scatter(rgs,vdops,c=cdops,lw=0,cmap="Spectral")
+    plt.scatter(rgs,v,c=cdops,lw=0,cmap="Spectral")
     cbar=plt.colorbar()
     cbar.set_label('Doppler shift (km/s)')
     plt.xlabel("Range (km)")
@@ -105,11 +106,9 @@ def plot_data(fname):
     
     # info on d and r
     
-    enrs=n.array(rts)
-    print(n.min(enrs))
-    H,x,y=n.histogram2d(rgs,10.0*n.log10(enrs**2.0),range=[[0,3000],[0,80]],bins=(20,40))
-    ho["enrs"]=enrs
-    ho["r_enr"]=H
+    print(n.min(snr))
+    H,x,y=n.histogram2d(rgs,10.0*n.log10(snr),range=[[0,3000],[0,80]],bins=(20,40))
+
     
     plt.subplot(121)
     plt.scatter(t0,rgs,c=cdops,lw=0,cmap="nipy_spectral")
@@ -132,7 +131,7 @@ def plot_data(fname):
     
     
     plt.subplot(121)
-    plt.scatter(rgs,10.0*n.log10(enrs**2.0),c=cdops,lw=0)
+    plt.scatter(rgs,10.0*n.log10(snr),c=cdops,lw=0)
     plt.xlabel("Range (km)")
     plt.ylabel("Signal to noise ratio (dB)")
     plt.subplot(122)
@@ -143,8 +142,8 @@ def plot_data(fname):
     plt.show()
     
     r,x=n.histogram(rgs,bins=n.arange(300,2000,50.0))
-    ho["h_r"]=r
-    ho.close()
+
+
     
     
     plt.plot(0.5*(x[0:(len(x)-1)]+x[1:len(x)]),r)
@@ -152,11 +151,11 @@ def plot_data(fname):
     plt.ylabel("Detections (50 km bin)")
     plt.show()
     
-    vdops=n.array(vdops)
-    H,x,y=n.histogram2d(t0,vdops,range=[[0,86400],[-3,3]],bins=(24,100))
+    v=n.array(v)
+    H,x,y=n.histogram2d(t0,v,range=[[0,86400],[-3,3]],bins=(24,100))
     
     plt.subplot(121)
-    plt.scatter(t0,vdops,c=cdops,lw=0)
+    plt.scatter(t0,v,c=cdops,lw=0)
     plt.xlabel("Time (s since %s)"%(stuffr.unix2datestr(t0s[0])))
     plt.ylabel("Doppler velocity (km/s)")
     
@@ -169,3 +168,8 @@ def plot_data(fname):
     
     plt.colorbar()
     plt.show()
+
+
+if __name__ == "__main__":
+    read_spade(dirname="/media/j/4f5bab17-2890-4bb0-aaa8-ea42d65fdac8/spade/final/leo_bpark_2.1u_NO@uhf/2019040[2-3]*/*.txt",output_h5="tmp.h5")
+    plot_data("tmp.h5")
