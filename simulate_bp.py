@@ -9,7 +9,6 @@ from sorts import SpaceObject
 import jcoord
 import numpy as n
 
-
 options = dict(
     settings=dict(
         in_frame='GCRS',
@@ -22,11 +21,11 @@ class beampark_radar:
     a class which includes coordinates for a radar performing a beampark observations
     """
     def __init__(self,
-                 lat=69.58,
+                 lat=69.58,  
                  lon=19.23,
                  h=86.0,
                  az=90.0,
-                 el=90.0,
+                 el=70.0,
                  obstime="2019-06-06",
                  name="EISCAT UHF"):
         
@@ -38,7 +37,7 @@ class beampark_radar:
 
         # ecef position of radar
         self.loc = jcoord.geodetic2ecef(self.lat, self.lon, self.h)
-
+        
         # unit vector pointing towards radar on axis
         self.k = jcoord.azel_ecef(self.lat, self.lon, self.h, self.az, self.el)
         
@@ -48,8 +47,11 @@ class beampark_radar:
         one dimensional angle between on-axis position and target
         """
         # dot product
-        k_dot_p=states[0,:]*self.k[0] + states[1,:]*self.k[1] + states[2,:]*self.k[2]
-        p_dot_p=n.sqrt(states[0,:]**2.0+states[1,:]**2.0+states[2,:]**2.0)
+        v0=states[0,:]-self.loc[0]
+        v1=states[1,:]-self.loc[1]
+        v2=states[2,:]-self.loc[2]        
+        k_dot_p=v0*self.k[0] + v1*self.k[1] + v2*self.k[2]
+        p_dot_p=n.sqrt(v0**2.0+v1**2.0+v2**2.0)
         angle=n.arccos(k_dot_p/p_dot_p)
         return(angle)
 
@@ -62,7 +64,7 @@ class beampark_radar:
          dims 0,1,2 = x,y,z  (m)
               3,4,5 = vx,vy,vz (m/s)
         """
-        k=n.zeros([3,states.shape[1]],dtype=n.float)
+        k=n.zeros([3,states.shape[1]],dtype=n.float64)
         
         k[0,:]=states[0,:]-self.loc[0]
         k[1,:]=states[1,:]-self.loc[1]
@@ -82,7 +84,7 @@ class beampark_radar:
                     obj, 
                     t0=0,
                     t1=24*3600.0,
-                    threshold_angle=5.0,
+                    threshold_angle=15.0,
                     dt_coarse=10.0,  # first search uses this
                     dt=0.2):       # values reported using this resolution
         """
@@ -113,6 +115,7 @@ class beampark_radar:
         n_passes = len(start_idx)
         t_all=[]
         for pi in range(n_passes):
+#            print("pass %d %1.2f-%1.2f"%(pi,t[good_times[start_idx[pi]]],t[good_times[end_idx[pi]]]))
             # high res time sampling
             t_hr = n.arange(t[good_times[start_idx[pi]]],t[good_times[end_idx[pi]]],dt)
             t_all=n.concatenate((t_all,t_hr))
@@ -124,7 +127,6 @@ def test_pass(obj):
 
     # create a radar
     radar=beampark_radar()
-
 
     t_hr=radar.find_passes(obj,t0=0,t1=24*3600,dt_coarse=10.0)
 
@@ -144,7 +146,7 @@ def test_pass(obj):
     if len(t_hr)>0:    
         plt.plot(t_hr,180.0*angles_hr/n.pi,".")    
     plt.xlabel("Time (seconds since epoch)")
-    plt.ylabel("rOn-axis angle (deg)")
+    plt.ylabel("On-axis angle (deg)")
     plt.show()
     
     ranges,range_rates=radar.get_range_and_range_rate(states)
@@ -172,17 +174,67 @@ def test_pass(obj):
     plt.show()
 
 
+def get_range_dop_dist(a=7000e3,i=71.0,N_sim=10):
+    """
+    Propagate objects in orbit and determine the
+    range and range-rate at smallest on-axis angle 
+    """
+    
+    # create a radar
+    radar=beampark_radar(el=70.0)
+
+    pars=[]
+    for oi in range(N_sim):
+        print(oi)
+        obj = SpaceObject(
+            Kepler,
+            propagator_options = options,
+            a = a, 
+            e = 0.0, 
+            i = i, 
+            raan = 360.0*n.random.rand(1)/n.pi, 
+            aop = 0,
+            mu0 = 180.0*n.random.rand(1)/n.pi, 
+            epoch = Time("2019-06-01T00:00:00Z"), # utc date for epoch
+            parameters = dict(
+                d = 0.2,
+            )
+        )
+        t_hr=radar.find_passes(obj,t0=0,t1=4*24*3600,dt_coarse=10.0)
+
+        if len(t_hr)>0:
+            states_hr = obj.get_state(t_hr)    
+            angles_hr=radar.get_on_axis_angle(states_hr)
+            mi = n.argmin(angles_hr)
+            ranges,range_rates=radar.get_range_and_range_rate(states_hr)
+            range_km=ranges[mi]/1e3
+            range_rate_km=range_rates[mi]/1e3
+            par=[180.0*angles_hr[mi]/n.pi,range_km,range_rate_km]
+            print(par)
+            pars.append(par)
+    pars=n.array(pars)
+    plt.subplot(121)
+    plt.plot(pars[:,0],pars[:,1],".")
+    plt.xlabel("On-axis angle (deg)")
+    plt.ylabel("Range (km))")    
+    plt.subplot(122)    
+    plt.plot(pars[:,0],pars[:,2],".")
+    plt.xlabel("On-axis angle (deg)")
+    plt.ylabel("Range-rate (km/s))")    
+    plt.show()
+            
+    
 
 
-def plot_3d_orbit(obj):
+
+def plot_3d_orbit(obj,radar):
     """
     plot position of space object when it is "close" to the on axis position
     """
 
     # create a space object
-    radar=beampark_radar()
     t_hr=radar.find_passes(obj,t0=0,t1=24*3600)
-    t_lr=n.arange(0,24*3600,20)
+    t_lr=n.arange(0,24*3600,100)
     # high resolution close to zero on-axis angles only
     
     # low time resolution
@@ -191,14 +243,13 @@ def plot_3d_orbit(obj):
     fig = plt.figure(figsize=(15,15))
     ax = fig.add_subplot(111, projection='3d')
     ax.plot(states_lr[0,:], states_lr[1,:], states_lr[2,:],".")
+    ax.plot([radar.loc[0],radar.loc[0]+radar.k[0]*2000e3],
+            [radar.loc[1],radar.loc[1]+radar.k[1]*2000e3],
+            [radar.loc[2],radar.loc[2]+radar.k[2]*2000e3],color="red")
 
     if len(t_hr)>0:
         states = obj.get_state(t_hr)
         ax.plot(states[0,:], states[1,:], states[2,:],".")
-    
-        ax.plot([radar.loc[0],radar.loc[0]+radar.k[0]*2000e3],
-                [radar.loc[1],radar.loc[1]+radar.k[1]*2000e3],
-                [radar.loc[2],radar.loc[2]+radar.k[2]*2000e3],color="red")
         
         max_range = np.linalg.norm(states[0:3,0])*2
         
@@ -209,6 +260,10 @@ def plot_3d_orbit(obj):
 
 
 if __name__ == "__main__":
+
+    get_range_dop_dist(a=7000e3,i=89.0,N_sim=100)
+    exit(0)
+    
     obj = SpaceObject(
         Kepler,
         propagator_options = options,
