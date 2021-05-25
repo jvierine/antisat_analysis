@@ -5,9 +5,13 @@ from astropy.time import Time
 
 from sorts.propagator import Kepler
 from sorts import SpaceObject
-
+import scipy.optimize as sio
 import jcoord
 import numpy as n
+import sklearn.cluster as scl
+import h5py
+from mpi4py import MPI
+comm = MPI.COMM_WORLD
 
 options = dict(
     settings=dict(
@@ -85,6 +89,7 @@ class beampark_radar:
                     t0=0,
                     t1=24*3600.0,
                     threshold_angle=15.0,
+                    use_threshold=True,
                     dt_coarse=10.0,  # first search uses this
                     dt=0.2):       # values reported using this resolution
         """
@@ -103,7 +108,11 @@ class beampark_radar:
         # on-axis angle in degrees
         angles=180.0*self.get_on_axis_angle(states)/n.pi
 
-        good_times = n.where(angles < threshold_angle)[0]
+        if use_threshold:
+            good_times = n.where(angles < threshold_angle)[0]
+        else:
+            mi=n.argmin(angles)
+            return(n.array([t[mi]]))
 
         if len(good_times) < 2:
             return(n.array([],dtype=n.int))
@@ -120,8 +129,6 @@ class beampark_radar:
             t_hr = n.arange(t[good_times[start_idx[pi]]],t[good_times[end_idx[pi]]],dt)
             t_all=n.concatenate((t_all,t_hr))
         return(t_all)
-            
-
 
 def test_pass(obj):
 
@@ -174,58 +181,128 @@ def test_pass(obj):
     plt.show()
 
 
-def get_range_dop_dist(a=7000e3,i=71.0,N_sim=10):
+def get_on_axis_radar_obs(radar,i=74.0,a=7000e3):
     """
-    Propagate objects in orbit and determine the
-    range and range-rate at smallest on-axis angle 
+    Use optimization search to find range and doppler corresponding to on-axis crossing.
+    There are two solutions to Doppler!
     """
-    
-    # create a radar
-    radar=beampark_radar(el=70.0)
-
-    pars=[]
-    for oi in range(N_sim):
-        print(oi)
+    def ss(x):
+        raan = n.mod(x[0],360.0)
+        mu0 = n.mod(x[1],360.0)
+        t_hr = n.array(x[2])
+        
         obj = SpaceObject(
             Kepler,
             propagator_options = options,
             a = a, 
             e = 0.0, 
             i = i, 
-            raan = 360.0*n.random.rand(1)/n.pi, 
+            raan = raan,
             aop = 0,
-            mu0 = 180.0*n.random.rand(1)/n.pi, 
+            mu0 = mu0, 
             epoch = Time("2019-06-01T00:00:00Z"), # utc date for epoch
             parameters = dict(
                 d = 0.2,
             )
         )
-        t_hr=radar.find_passes(obj,t0=0,t1=4*24*3600,dt_coarse=10.0)
-
-        if len(t_hr)>0:
-            states_hr = obj.get_state(t_hr)    
-            angles_hr=radar.get_on_axis_angle(states_hr)
-            mi = n.argmin(angles_hr)
-            ranges,range_rates=radar.get_range_and_range_rate(states_hr)
-            range_km=ranges[mi]/1e3
-            range_rate_km=range_rates[mi]/1e3
-            par=[180.0*angles_hr[mi]/n.pi,range_km,range_rate_km]
-            print(par)
-            pars.append(par)
-    pars=n.array(pars)
-    plt.subplot(121)
-    plt.plot(pars[:,0],pars[:,1],".")
-    plt.xlabel("On-axis angle (deg)")
-    plt.ylabel("Range (km))")    
-    plt.subplot(122)    
-    plt.plot(pars[:,0],pars[:,2],".")
-    plt.xlabel("On-axis angle (deg)")
-    plt.ylabel("Range-rate (km/s))")    
-    plt.show()
-            
+        states_hr = obj.get_state(t_hr)    
+        angles_hr=radar.get_on_axis_angle(states_hr)
+        ang=n.min(angles_hr)*180.0/n.pi
+        return(ang)
     
+    x0=n.array([360.0*n.random.rand(1)[0],360.0*n.random.rand(1)[0]])
+    obj = SpaceObject(
+        Kepler,
+        propagator_options = options,
+        a = a, 
+        e = 0.0, 
+        i = i, 
+        raan = x0[0],
+        aop = 0,
+        mu0 = x0[1], 
+        epoch = Time("2019-06-01T00:00:00Z"), # utc date for epoch
+        parameters = dict(
+            d = 0.2,
+        )
+    )
+    print("finding candidate pass")
+    t_hr=radar.find_passes(obj,t0=0.0,t1=24*3600.0,dt_coarse=60.0,use_threshold=False)
+    states_hr = obj.get_state(t_hr)            
+    angles_hr=180.0*radar.get_on_axis_angle(states_hr)/n.pi
+    t0=t_hr[n.argmin(angles_hr)]
+    print("starting with %1.2f"%(angles_hr[0]))
+    xhat=sio.fmin(ss,[x0[0],x0[1],t0])
+    
+    obj = SpaceObject(
+        Kepler,
+        propagator_options = options,
+        a = a, 
+        e = 0.0, 
+        i = i, 
+        raan = n.mod(xhat[0],360.0),
+        aop = 0,
+        mu0 = n.mod(xhat[1],360.0), 
+        epoch = Time("2019-06-01T00:00:00Z"), # utc date for epoch
+        parameters = dict(
+            d = 0.2,
+        )
+    )
+    t_hr=n.array([xhat[2]])
+    states_hr = obj.get_state(t_hr)            
+    angles_hr=180.0*radar.get_on_axis_angle(states_hr)/n.pi
+    ranges,range_rates=radar.get_range_and_range_rate(states_hr)
+    return(angles_hr[0],ranges[0],range_rates[0])
+
+def get_range_dop_dist(radar,a=7000e3,i=71.0,N_sim=10):
+    """
+    Propagate objects in orbit and determine the
+    range and range-rate at smallest on-axis angle 
+    """
+    pars=[]
+    for oi in range(N_sim):
+        xhat=get_on_axis_radar_obs(radar,i=i,a=a)
+        print(xhat)
+        pars.append(xhat)
+    pars=n.array(pars)
+    ka=scl.KMeans(n_clusters=2)
+    ka.fit(pars)
+    return(ka.cluster_centers_)
 
 
+def range_doppler_search(radar,i=69.0,a=7000e3):
+    """
+    look for ranges and range-rates corresponding to 
+    """
+    # create a radar
+
+    ret=get_range_dop_dist(radar,a=a,i=i,N_sim=10)
+    angle=ret[0,0]
+    range_m=ret[0,1]
+    range_rate_0=ret[0,2]
+    range_rate_1=ret[1,2]
+    print("found angle %1.2f range %1.2f range-rate %1.2f,%1.2f"%(angle,range_m,range_rate_0,range_rate_1))
+    return(angle,range_m,range_rate_0,range_rate_1)
+
+def eiscat_uhf_range_dop_search():
+    radar=beampark_radar(el=70.0)
+    R_e=6371e3
+    apogees=n.linspace(300e3,3000e3,num=20)+R_e
+    incs=n.arange(68,113)
+    n_apog=len(apogees)
+    for ai in range(comm.rank,n_apog,comm.size):
+        a=apogees[ai]
+        for inc in incs:
+            print("Searching a=%1.2f i=%1.2f"%(a,inc))
+            angle,rg,rg_rt0,rg_rt1=range_doppler_search(radar,a=a,i=inc)
+            ho=h5py.File("range_range_rate-a%1.2f-i%1.2f.h5"%(a,inc),"w")
+            ho["a"]=a
+            ho["inc"]=inc
+            ho["range"]=rg
+            ho["angle"]=angle
+            ho["range_rate0"]=rg_rt0
+            ho["range_rate1"]=rg_rt1
+            ho.close()
+            
 
 def plot_3d_orbit(obj,radar):
     """
@@ -261,7 +338,9 @@ def plot_3d_orbit(obj,radar):
 
 if __name__ == "__main__":
 
-    get_range_dop_dist(a=7000e3,i=89.0,N_sim=100)
+    #get_range_dop_dist(a=7000e3,i=89.0,N_sim=100)
+#    range_doppler_search()
+    eiscat_uhf_range_dop_search()
     exit(0)
     
     obj = SpaceObject(
