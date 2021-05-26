@@ -275,7 +275,7 @@ def range_doppler_search(radar,i=69.0,a=7000e3):
     """
     # create a radar
 
-    ret=get_range_dop_dist(radar,a=a,i=i,N_sim=10)
+    ret=get_range_dop_dist(radar,a=a,i=i,N_sim=20)
     angle=ret[0,0]
     range_m=ret[0,1]
     range_rate_0=ret[0,2]
@@ -288,6 +288,7 @@ def eiscat_uhf_range_dop_search():
     R_e=6371e3
     apogees=n.linspace(300e3,3000e3,num=20)+R_e
     incs=n.arange(68,113)
+#    incs=[69,70,77]#n.arange(68,113)    
     n_apog=len(apogees)
     for ai in range(comm.rank,n_apog,comm.size):
         a=apogees[ai]
