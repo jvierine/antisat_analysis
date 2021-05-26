@@ -189,7 +189,7 @@ def get_on_axis_radar_obs(radar,i=74.0,a=7000e3):
     def ss(x):
         raan = n.mod(x[0],360.0)
         mu0 = n.mod(x[1],360.0)
-        t_hr = n.array(x[2])
+        t_hr = n.array([x[2]])
         
         obj = SpaceObject(
             Kepler,
@@ -283,19 +283,21 @@ def range_doppler_search(radar,i=69.0,a=7000e3):
     print("found angle %1.2f range %1.2f range-rate %1.2f,%1.2f"%(angle,range_m,range_rate_0,range_rate_1))
     return(angle,range_m,range_rate_0,range_rate_1)
 
-def eiscat_uhf_range_dop_search():
-    radar=beampark_radar(el=70.0)
+def eiscat_uhf_range_dop_search(el=75.0):
+    radar=beampark_radar(el=el)
     R_e=6371e3
     apogees=n.linspace(300e3,3000e3,num=20)+R_e
     incs=n.arange(68,113)
 #    incs=[69,70,77]#n.arange(68,113)    
     n_apog=len(apogees)
-    for ai in range(comm.rank,n_apog,comm.size):
+    n_incs=len(incs)
+    for ai in range(n_apog):
         a=apogees[ai]
-        for inc in incs:
+        for inci in range(comm.rank,n_incs,comm.size):
+            inc=incs[inci]
             print("Searching a=%1.2f i=%1.2f"%(a,inc))
             angle,rg,rg_rt0,rg_rt1=range_doppler_search(radar,a=a,i=inc)
-            ho=h5py.File("range_range_rate-a%1.2f-i%1.2f.h5"%(a,inc),"w")
+            ho=h5py.File("data/range_range_rate-el%1.2f-a%1.2f-i%1.2f.h5"%(el,a,inc),"w")
             ho["a"]=a
             ho["inc"]=inc
             ho["range"]=rg
