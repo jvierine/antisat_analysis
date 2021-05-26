@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 
 def get_data():
-    fl=glob.glob("data/range_range_rate-*.h5")
+    fl=glob.glob("data/range_range_rate*.h5")
 
     pars=[]
     for f in fl:

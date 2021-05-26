@@ -4,6 +4,7 @@ import stuffr
 import matplotlib.pyplot as plt
 import h5py
 
+import plot_bp_obs_par as pobs
 
 def read_spade(dirname="leo_bpark_2.1u_NO@uhf/2019040[5]_*/*.txt",output_h5="out.h5"):
 
@@ -89,9 +90,12 @@ def plot_data(fname):
     cdops=n.copy(v)
     cdops[cdops>4]=4
     cdops[cdops<-4]=-4
-    plt.scatter(rgs,v,c=cdops,lw=0,cmap="Spectral")
-    cbar=plt.colorbar()
-    cbar.set_label('Doppler shift (km/s)')
+    pars=pobs.get_data()    
+    plt.scatter(rgs,v,s=1,c="black",lw=0,cmap="Spectral")
+    pobs.plot_range_rates(pars,pincs=n.array([70,74,82,87,90,95,99,102]))
+    plt.legend(title="Inclination")    
+#    cbar=plt.colorbar()
+ #   cbar.set_label('Doppler shift (km/s)')
     plt.xlabel("Range (km)")
     plt.ylabel("Doppler velocity (km/s)")
     plt.title("Detections")
@@ -101,6 +105,9 @@ def plot_data(fname):
     plt.title("Histogram")
     plt.xlabel("Range (km)")
     plt.ylabel("Doppler velocity (km/s)")
+
+    pobs.plot_range_rates(pars,pincs=n.array([70,74,82,87,90,95,99,102]))
+#
     plt.colorbar()
     plt.show()
     
@@ -126,6 +133,9 @@ def plot_data(fname):
     plt.xlabel("Time (s since %s)"%(stuffr.unix2datestr(t0s[0])))
     plt.ylabel("Detections per 30 minutes")
     plt.title("Histogram")
+
+
+    
     plt.show()
     
     
@@ -172,4 +182,5 @@ def plot_data(fname):
 
 if __name__ == "__main__":
     read_spade(dirname="/media/j/4f5bab17-2890-4bb0-aaa8-ea42d65fdac8/spade/final/leo_bpark_2.1u_NO@uhf/2019040[2-3]*/*.txt",output_h5="tmp.h5")
+    
     plot_data("tmp.h5")
