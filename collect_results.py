@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import h5py
 
 
-def read_spade(dirname="leo_bpark_2.1u_NO@uhf/2019040[5]_*/*.txt",output_h5="out.h5"):
+def read_spade(dirname="uhf/2019.04.02/2019040[2-3]_*/*.txt",output_h5="out.h5"):
 
     fl=glob.glob(dirname)
     fl.sort()
@@ -46,19 +46,21 @@ def read_spade(dirname="leo_bpark_2.1u_NO@uhf/2019040[5]_*/*.txt",output_h5="out
             oi+=1
             #        print(flag)
             #       if flag == 0.0:
-            t0s.append(t0)
-            rgs.append(rg)
-            vdops.append(vdop)
-            rts.append(rt)
-            durs.append(edur)
-            diams.append(diam)
+            if rt**2.0 > 33:
+                t0s.append(t0)
+                rgs.append(rg)
+                vdops.append(vdop)
+                rts.append(rt)
+                durs.append(edur)
+                diams.append(diam)
 
     t=n.array(t0s)
     r=n.array(rgs)
     v=n.array(vdops)
     snr=n.array(rts)**2.0
     dur=n.array(durs)
-    diams=n.array(diams)    
+    diams=n.array(diams)
+    
     # store in hdf5 format
     ho=h5py.File(output_h5,"w")
     ho["t"]=t    # t
@@ -68,9 +70,8 @@ def read_spade(dirname="leo_bpark_2.1u_NO@uhf/2019040[5]_*/*.txt",output_h5="out
     ho["dur"]=dur  # duration
     ho["diams"]=diams # minimum diameter
     ho.close()
+    return(t,r,v,snr,dur,diams)
     
-
-
 def plot_data(fname):
     h=h5py.File(fname,"r")
     v=h["v"][()]
@@ -111,7 +112,7 @@ def plot_data(fname):
 
     
     plt.subplot(121)
-    plt.scatter(t0,rgs,c=cdops,lw=0,cmap="nipy_spectral")
+    plt.scatter(t0,rgs,c=cdops,lw=0,cmap="nipy_spectral",vmin=-2,vmax=2)
     
     cbar=plt.colorbar()
     cbar.set_label('Doppler shift (km/s)')
@@ -171,5 +172,33 @@ def plot_data(fname):
 
 
 if __name__ == "__main__":
-    read_spade(dirname="/media/j/4f5bab17-2890-4bb0-aaa8-ea42d65fdac8/spade/final/leo_bpark_2.1u_NO@uhf/2019040[2-3]*/*.txt",output_h5="tmp.h5")
-    plot_data("tmp.h5")
+
+    t,r,v,snr,dur,diams = read_spade(dirname="uhf/2021.11.29/leo_bpark_2.1u_SW@uhf/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")
+
+    
+    t,r,v,snr,dur,diams = read_spade(dirname="uhf/2021.11.25/leo_bpark_2.1u_SW@uhf/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")
+
+    t,r,v,snr,dur,diams = read_spade(dirname="uhf/2021.11.23/leo_bpark_2.1u_NO@uhf/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")
+
+ 
+    
+    
+    t,r,v,snr,dur,diams = read_spade(dirname="uhf/2018.01.04/leo_bpark_2.1u_NO@uhf/*/*.txt")
+    plt.plot(t,r,".")
+    plt.show()
+
+    
+    
+    t,r,v,snr,dur,diams = read_spade(dirname="uhf/2018.01.04/leo_bpark_2.1u_NO@uhf/*/*.txt")
+    plt.plot(t,r,".")
+    plt.show()
+    t,r,v,snr,dur,diams = read_spade(dirname="uhf/2019.04.02/leo_bpark_2.1u_NO@uhf/*/*.txt")
+    plt.plot(t,r,".")
+    plt.show()
+    t,r,v,snr,dur,diams = read_spade(dirname="uhf/2021.04.12/leo_bpark_2.1u_NO@uhf/*/*.txt")
+    plt.plot(t,r,".")
+    plt.show()
+
