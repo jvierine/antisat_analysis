@@ -198,11 +198,11 @@ def main():
             print(xhat1)
             xhats += [xhat1]
             all_hits[0] += [xhat1.x]
-            all_obs[0] += [orb_to_range_and_range_rate(xhat1.x, epoch, st, a, inclination)]
+            all_obs[0] += [list(orb_to_range_and_range_rate(xhat1.x, epoch, st, a, inclination))]
             orb_hits += [xhat1.x]
         else:
             all_hits[0] += [x_start]
-            all_obs[0] += [orb_to_range_and_range_rate(x_start, epoch, st, a, inclination)]
+            all_obs[0] += [list(orb_to_range_and_range_rate(x_start, epoch, st, a, inclination))]
             orb_hits += [x_start]
 
         other_ind = np.argmax(np.abs(anom[inds] - anom[inds[0]]) > 5.0)
@@ -220,24 +220,34 @@ def main():
                 xhats += [xhat2]
                 xhats = [xhat1, xhat2]
                 all_hits[1] += [xhat2.x]
-                all_obs[1] += [orb_to_range_and_range_rate(xhat2.x, epoch, st, a, inclination)]
+                all_obs[1] += [list(orb_to_range_and_range_rate(xhat2.x, epoch, st, a, inclination))]
                 orb_hits += [xhat2.x]
             else:
                 all_hits[1] += [x_start2]
-                all_obs[1] += [orb_to_range_and_range_rate(x_start2, epoch, st, a, inclination)]
+                all_obs[1] += [list(orb_to_range_and_range_rate(x_start2, epoch, st, a, inclination))]
                 orb_hits += [x_start2]
+
+            if all_obs[1][-1][1] > all_obs[0][-1][1]:
+               _x = all_obs[1][-1]
+               all_obs[1][-1] = all_obs[0][-1]
+               all_obs[0][-1] = _x
+
+               _x = all_hits[1][-1] 
+               all_hits[1][-1] = all_hits[0][-1]
+               all_hits[0][-1] = _x
 
         # figs, axes = plot_inclination_results(anom, Omega, angle, ranges, range_rates, samples, orb_hits=orb_hits)
         # plt.show()
 
-    fig, axes = plt.subplots(2, 1)
+    fig, axes = plt.subplots(3, 1)
 
     for node, col in zip(range(2), ['b', 'r']):
         obs_data = np.squeeze(np.array(all_obs[node])).T
         orb_data = np.squeeze(np.array(all_hits[node])).T
 
         axes[0].plot(obs_data[0, :], obs_data[1, :], '-' + col)
-        axes[1].plot(orb_data[0, :], orb_data[1, :], '-' + col)
+        axes[1].plot(obs_data[0, :], orb_data[0, :], '-' + col)
+        axes[2].plot(obs_data[0, :], orb_data[1, :], '-' + col)
     plt.show()
 
 
