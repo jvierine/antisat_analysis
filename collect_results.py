@@ -73,7 +73,7 @@ def read_spade(dirname="uhf/2019.04.02/2019040[2-3]_*/*.txt",output_h5="out.h5")
     ho.close()
     return(t,r,v,snr,dur,diams)
     
-def plot_data(fname):
+def plot_data(fname, velmin=-2.3, velmax=2.3):
     h=h5py.File(fname,"r")
     v=h["v"][()]
     t=h["t"][()]
@@ -100,7 +100,7 @@ def plot_data(fname):
     plt.xlabel("Range (km)")
     plt.ylabel("Doppler velocity (km/s)")
     plt.title("Detections")
-    plt.ylim([-3,3])
+    plt.ylim([-2.5,2.5])
     plt.subplot(122)
     plt.pcolormesh(y,x,H)
     plt.title("Histogram")
@@ -119,7 +119,7 @@ def plot_data(fname):
 
     
     plt.subplot(121)
-    plt.scatter(t0,rgs,c=cdops,lw=0,cmap="nipy_spectral",vmin=-2,vmax=2)
+    plt.scatter(t0,rgs,c=cdops,lw=0,cmap="nipy_spectral",vmin=-2.5,vmax=2.5)
     
     cbar=plt.colorbar()
     cbar.set_label('Doppler shift (km/s)')
@@ -135,81 +135,90 @@ def plot_data(fname):
     plt.ylabel("Detections per 30 minutes")
     plt.title("Histogram")
 
-
-    
     plt.show()
     
     
+    if False:
+        plt.subplot(121)
+        plt.scatter(rgs,10.0*n.log10(snr),c=cdops,lw=0)
+        plt.xlabel("Range (km)")
+        plt.ylabel("Signal to noise ratio (dB)")
+        plt.subplot(122)
+        plt.pcolormesh(x,y,H.T)
+        plt.xlabel("Range (km)")
+        plt.ylabel("Signal to noise ratio (dB)")
+        plt.colorbar()
+        plt.show()
+        
+        r,x=n.histogram(rgs,bins=n.arange(300,2000,50.0))
+        
+        
     
-    plt.subplot(121)
-    plt.scatter(rgs,10.0*n.log10(snr),c=cdops,lw=0)
-    plt.xlabel("Range (km)")
-    plt.ylabel("Signal to noise ratio (dB)")
-    plt.subplot(122)
-    plt.pcolormesh(x,y,H.T)
-    plt.xlabel("Range (km)")
-    plt.ylabel("Signal to noise ratio (dB)")
-    plt.colorbar()
-    plt.show()
-    
-    r,x=n.histogram(rgs,bins=n.arange(300,2000,50.0))
-
-
-    
-    
-    plt.plot(0.5*(x[0:(len(x)-1)]+x[1:len(x)]),r)
-    plt.xlabel("Range (km)")
-    plt.ylabel("Detections (50 km bin)")
-    plt.show()
+        
+        plt.plot(0.5*(x[0:(len(x)-1)]+x[1:len(x)]),r)
+        plt.xlabel("Range (km)")
+        plt.ylabel("Detections (50 km bin)")
+        plt.show()
     
     v=n.array(v)
-    H,x,y=n.histogram2d(t0,v,range=[[0,86400],[-3,3]],bins=(24,100))
+    H,x,y=n.histogram2d(t0,v,range=[[0,n.max(t0)],[velmin,velmax]],bins=(int(n_hours),100))
     
     plt.subplot(121)
-    plt.scatter(t0,v,c=cdops,lw=0)
+    plt.scatter(t0,v,c=rgs,lw=0,cmap="nipy_spectral")
+    plt.ylim([-2.5,2.5])
+    plt.colorbar()
     plt.xlabel("Time (s since %s)"%(stuffr.unix2datestr(t0s[0])))
     plt.ylabel("Doppler velocity (km/s)")
     
     
-    plt.ylim([-3,3])
+
     plt.subplot(122)
     plt.pcolormesh(x,y,H.T)
     plt.xlabel("Time (s since %s)"%(stuffr.unix2datestr(t0s[0])))
     plt.ylabel("Doppler velocity (km/s)")
     
     plt.colorbar()
+    plt.tight_layout()
     plt.show()
 
 
 if __name__ == "__main__":
 
+    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2019.04.05/leo_bpark_2.1u_NO@uhf/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")    
 
-    t,r,v,snr,dur,diams = read_spade(dirname="uhf/2021.11.29/leo_bpark_2.1u_SW@uhf/*/*.txt",output_h5="out.h5")
+    
+    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/esr/2021.11.25/leo_bpark_2.2_SW@42m/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")    
+
+    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/esr/2021.11.29/leo_bpark_2.2_SW@42m/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")
+    
+    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/esr/2021.11.23/leo_bpark_2.2_SW@32m/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")
+    
+    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/esr/2021.11.19/leo_bpark_2.2_SW@32m/*/*.txt",output_h5="out.h5")
     plot_data("out.h5")
 
+    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2021.11.29/leo_bpark_2.1u_SW@uhf/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")
     
-    t,r,v,snr,dur,diams = read_spade(dirname="uhf/2021.11.25/leo_bpark_2.1u_SW@uhf/*/*.txt",output_h5="out.h5")
+    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2021.11.25/leo_bpark_2.1u_SW@uhf/*/*.txt",output_h5="out.h5")
     plot_data("out.h5")
 
-    t,r,v,snr,dur,diams = read_spade(dirname="uhf/2021.11.23/leo_bpark_2.1u_NO@uhf/*/*.txt",output_h5="out.h5")
+    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2021.11.23/leo_bpark_2.1u_NO@uhf/*/*.txt",output_h5="out.h5")
     plot_data("out.h5")
+    
+    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2018.01.04/leo_bpark_2.1u_NO@uhf/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")
+    
+    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2018.01.04/leo_bpark_2.1u_NO@uhf/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")    
 
- 
-    
-    
-    t,r,v,snr,dur,diams = read_spade(dirname="uhf/2018.01.04/leo_bpark_2.1u_NO@uhf/*/*.txt")
-    plt.plot(t,r,".")
-    plt.show()
+    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2019.04.02/leo_bpark_2.1u_NO@uhf/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")    
 
-    
-    
-    t,r,v,snr,dur,diams = read_spade(dirname="uhf/2018.01.04/leo_bpark_2.1u_NO@uhf/*/*.txt")
-    plt.plot(t,r,".")
-    plt.show()
-    t,r,v,snr,dur,diams = read_spade(dirname="uhf/2019.04.02/leo_bpark_2.1u_NO@uhf/*/*.txt")
-    plt.plot(t,r,".")
-    plt.show()
-    t,r,v,snr,dur,diams = read_spade(dirname="uhf/2021.04.12/leo_bpark_2.1u_NO@uhf/*/*.txt")
-    plt.plot(t,r,".")
-    plt.show()
+    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2021.04.12/leo_bpark_2.1u_NO@uhf/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")    
+
 
