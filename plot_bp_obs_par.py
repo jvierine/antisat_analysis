@@ -25,6 +25,9 @@ def get_data():
     return(pars)
 
 def plot_range_rates(pars,pincs=n.array([70,75,80,85,90,95,100,105,110])):
+    """
+     Given inclination, plot doppler inclinations based on circular orbit crossing on-axis of beam
+    """
     incs=n.unique(pars[:,1])
     pi=0
     for inc in incs:
