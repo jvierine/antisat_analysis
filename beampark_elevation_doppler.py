@@ -125,8 +125,10 @@ def main():
 
     parser = argparse.ArgumentParser(description='Calculate the doppler-inclination correlation for a beampark')
     parser.add_argument('radar', type=str, help='The observing radar system')
+    parser.add_argument('cache', type=str, help='Cache location')
     parser.add_argument('azimuth', type=float, help='Azimuth of beampark')
     parser.add_argument('elevation', type=float, help='Elevation of beampark')
+    parser.add_argument('inclinations', type=float, help='inclinations', nargs='+')
 
     args = parser.parse_args()
 
@@ -144,111 +146,155 @@ def main():
     st = radar.tx[0]
     st.beam.sph_point(args.azimuth, args.elevation, radians=False)
     
-    inclination = 80.0
+    hf = h5py.File(args.cache, 'a')
 
-    k_ecef = st.pointing_ecef
-
-    anom, Omega = np.meshgrid(
-        np.linspace(0, 360, num=samples[0]),
-        np.linspace(0, 360, num=samples[1]),
-        indexing='ij',
-    )
-    anom = anom.reshape(anom.size)
-    Omega = Omega.reshape(Omega.size)
-
-    all_hits = [[], []]
-    all_obs = [[], []]
-
-    for a in semi_major_axis:
-
-        orbit = pyorb.Orbit(
-            M0 = pyorb.M_earth, 
-            degrees = True,
-            a = a, 
-            e = 0, 
-            i = 0, 
-            omega = 0,
-            Omega = Omega,
-            anom = anom,
-            num = anom.size,
-            type = 'mean',
-        )
-
-        print(orbit)
-
-        orbit.i = inclination
-        states = orbit.cartesian
-        ecef = sorts.frames.convert(epoch, states, in_frame='GCRS', out_frame='ITRS')
-        angle = np.degrees(get_on_axis_angle(st, ecef, k_ecef))
-
-        ranges, range_rates = get_range_and_range_rate(st, ecef)
-
-        inds = np.argsort(angle)
-
-        x_start = [anom[inds[0]], Omega[inds[0]]]
-        orb_hits = []
-        xhats = [] 
-        if optim:
-            xhat1 = sio.minimize(
-                lambda x: optim_on_axis_angle(x, epoch, st, k_ecef, a, inclination),
-                x_start,
-                method='Nelder-Mead',
-            )
-            print(x_start)
-            print(xhat1)
-            xhats += [xhat1]
-            all_hits[0] += [xhat1.x]
-            all_obs[0] += [list(orb_to_range_and_range_rate(xhat1.x, epoch, st, a, inclination))]
-            orb_hits += [xhat1.x]
-        else:
-            all_hits[0] += [x_start]
-            all_obs[0] += [list(orb_to_range_and_range_rate(x_start, epoch, st, a, inclination))]
-            orb_hits += [x_start]
-
-        other_ind = np.argmax(np.abs(anom[inds] - anom[inds[0]]) > 5.0)
+    for inclination in args.inclinations:
+        all_hits = [[], []]
+        all_obs = [[], []]
+        inclination = np.round(inclination, decimals=3)
+        dataset_key = f'{inclination}'
         
-        if other_ind.size > 0:
-            x_start2 = [anom[inds[other_ind]], Omega[inds[other_ind]]]
+        if dataset_key + f'_node{0}_obs' in hf:
+            continue
+
+        k_ecef = st.pointing_ecef
+
+        anom, Omega = np.meshgrid(
+            np.linspace(0, 360, num=samples[0]),
+            np.linspace(0, 360, num=samples[1]),
+            indexing='ij',
+        )
+        anom = anom.reshape(anom.size)
+        Omega = Omega.reshape(Omega.size)
+
+        for a in semi_major_axis:
+
+            orbit = pyorb.Orbit(
+                M0 = pyorb.M_earth, 
+                degrees = True,
+                a = a, 
+                e = 0, 
+                i = 0, 
+                omega = 0,
+                Omega = Omega,
+                anom = anom,
+                num = anom.size,
+                type = 'mean',
+            )
+
+            print(orbit)
+
+            orbit.i = inclination
+            states = orbit.cartesian
+            ecef = sorts.frames.convert(epoch, states, in_frame='GCRS', out_frame='ITRS')
+            angle = np.degrees(get_on_axis_angle(st, ecef, k_ecef))
+
+            ranges, range_rates = get_range_and_range_rate(st, ecef)
+
+            inds = np.argsort(angle)
+
+            x_start = [anom[inds[0]], Omega[inds[0]]]
+            orb_hits = []
+            xhats = [] 
             if optim:
-                xhat2 = sio.minimize(
+                xhat1 = sio.minimize(
                     lambda x: optim_on_axis_angle(x, epoch, st, k_ecef, a, inclination),
-                    x_start2,
+                    x_start,
                     method='Nelder-Mead',
                 )
-                print(x_start2)
-                print(xhat2)
-                xhats += [xhat2]
-                xhats = [xhat1, xhat2]
-                all_hits[1] += [xhat2.x]
-                all_obs[1] += [list(orb_to_range_and_range_rate(xhat2.x, epoch, st, a, inclination))]
-                orb_hits += [xhat2.x]
+                print(x_start)
+                print(xhat1)
+                xhats += [xhat1]
+                all_hits[0] += [xhat1.x]
+                all_obs[0] += [list(orb_to_range_and_range_rate(xhat1.x, epoch, st, a, inclination))]
+                orb_hits += [xhat1.x]
             else:
-                all_hits[1] += [x_start2]
-                all_obs[1] += [list(orb_to_range_and_range_rate(x_start2, epoch, st, a, inclination))]
-                orb_hits += [x_start2]
+                all_hits[0] += [x_start]
+                all_obs[0] += [list(orb_to_range_and_range_rate(x_start, epoch, st, a, inclination))]
+                orb_hits += [x_start]
 
-            if all_obs[1][-1][1] > all_obs[0][-1][1]:
-               _x = all_obs[1][-1]
-               all_obs[1][-1] = all_obs[0][-1]
-               all_obs[0][-1] = _x
+            other_ind = np.argmax(np.abs(anom[inds] - anom[inds[0]]) > 5.0)
+            
+            if other_ind.size > 0:
+                x_start2 = [anom[inds[other_ind]], Omega[inds[other_ind]]]
+                if optim:
+                    xhat2 = sio.minimize(
+                        lambda x: optim_on_axis_angle(x, epoch, st, k_ecef, a, inclination),
+                        x_start2,
+                        method='Nelder-Mead',
+                    )
+                    print(x_start2)
+                    print(xhat2)
+                    xhats += [xhat2]
+                    xhats = [xhat1, xhat2]
+                    all_hits[1] += [xhat2.x]
+                    all_obs[1] += [list(orb_to_range_and_range_rate(xhat2.x, epoch, st, a, inclination))]
+                    orb_hits += [xhat2.x]
+                else:
+                    all_hits[1] += [x_start2]
+                    all_obs[1] += [list(orb_to_range_and_range_rate(x_start2, epoch, st, a, inclination))]
+                    orb_hits += [x_start2]
 
-               _x = all_hits[1][-1] 
-               all_hits[1][-1] = all_hits[0][-1]
-               all_hits[0][-1] = _x
+                if all_obs[1][-1][1] > all_obs[0][-1][1]:
+                   _x = all_obs[1][-1]
+                   all_obs[1][-1] = all_obs[0][-1]
+                   all_obs[0][-1] = _x
 
-        # figs, axes = plot_inclination_results(anom, Omega, angle, ranges, range_rates, samples, orb_hits=orb_hits)
-        # plt.show()
+                   _x = all_hits[1][-1] 
+                   all_hits[1][-1] = all_hits[0][-1]
+                   all_hits[0][-1] = _x
 
-    fig, axes = plt.subplots(3, 1)
+        for node in range(2):
+            all_obs[node] = np.squeeze(np.array(all_obs[node])).T
+            all_hits[node] = np.squeeze(np.array(all_hits[node])).T
+            hf.create_dataset(dataset_key + f'_node{node}_obs', data=all_obs[node])
+            hf.create_dataset(dataset_key + f'_node{node}_hit', data=all_hits[node])
 
-    for node, col in zip(range(2), ['b', 'r']):
-        obs_data = np.squeeze(np.array(all_obs[node])).T
-        orb_data = np.squeeze(np.array(all_hits[node])).T
+            # figs, axes = plot_inclination_results(anom, Omega, angle, ranges, range_rates, samples, orb_hits=orb_hits)
+            # plt.show()
 
-        axes[0].plot(obs_data[0, :], obs_data[1, :], '-' + col)
-        axes[1].plot(obs_data[0, :], orb_data[0, :], '-' + col)
-        axes[2].plot(obs_data[0, :], orb_data[1, :], '-' + col)
+    fig = plt.figure()
+    axes = [
+        fig.add_subplot(3,1,1),
+        [
+            fig.add_subplot(3,2,3),
+            fig.add_subplot(3,2,4),
+        ],
+        [
+            fig.add_subplot(3,2,5),
+            fig.add_subplot(3,2,6),
+        ],
+    ]
+    nodes = {
+        1: 'Asc',
+        0: 'Dec',
+    }
+    for inci, inclination in enumerate(args.inclinations):
+        all_hits = [[], []]
+        all_obs = [[], []]
+        inclination = np.round(inclination, decimals=3)
+        dataset_key = f'{inclination}'
+
+        for node, col in zip(range(2), ['b', 'r']):
+            all_obs[node] = hf[dataset_key + f'_node{node}_obs'][()]
+            all_hits[node] = hf[dataset_key + f'_node{node}_hit'][()]
+
+            axes[0].plot(all_obs[node][0, :], all_obs[node][1, :], '-' + col, label=f'{nodes[node]}. @ {inclination:.2f} deg incl.')
+            axes[1][node].plot(all_obs[node][0, :], all_hits[node][0, :], '-' + col, label=f'{nodes[node]}. @ {inclination:.2f} deg incl.')
+            axes[2][node].plot(all_obs[node][0, :], all_hits[node][1, :], '-' + col, label=f'{nodes[node]}. @ {inclination:.2f} deg incl.')
+    axes[0].legend()
+    for node in range(2):
+        axes[1][node].legend()
+        axes[2][node].legend()
+    axes[0].set_xlabel('Range [m]')
+    axes[0].set_ylabel('Doppler [m/s]')
+    axes[1][0].set_ylabel('Mean anomaly [deg]')
+    axes[2][0].set_ylabel('Longitude of the ascending node [deg]')
+    axes[2][0].set_xlabel('Range [m]')
+    axes[2][1].set_xlabel('Range [m]')
     plt.show()
+
+    hf.close()
 
 
 if __name__ == '__main__':
