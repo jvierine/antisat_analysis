@@ -1,9 +1,13 @@
+
+from pathlib import Path
+import tempfile
 import glob
+
 import numpy as n
-import stuffr
 import matplotlib.pyplot as plt
 import h5py
 
+import stuffr
 import plot_bp_obs_par as pobs
 
 def read_spade(dirname="uhf/2019.04.02/2019040[2-3]_*/*.txt",output_h5="out.h5"):
@@ -74,7 +78,10 @@ def read_spade(dirname="uhf/2019.04.02/2019040[2-3]_*/*.txt",output_h5="out.h5")
     return(t,r,v,snr,dur,diams)
     
 def plot_data(fname, velmin=-2.3, velmax=2.3):
+
+
     h=h5py.File(fname,"r")
+
     v=h["v"][()]
     t=h["t"][()]
     rgs=h["r"][()]    
@@ -182,43 +189,79 @@ def plot_data(fname, velmin=-2.3, velmax=2.3):
     plt.show()
 
 
-if __name__ == "__main__":
+def plot_spade(reldir, toplevel_dir = '../beamparks/'):
+    path = Path(toplevel_dir) / reldir / "*/*.txt"
 
-    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2019.04.05/leo_bpark_2.1u_NO@uhf/*/*.txt",output_h5="out.h5")
-    plot_data("out.h5")    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        h5file = Path(tmpdir) / 'out.h5'
+
+        t,r,v,snr,dur,diams = read_spade(dirname=str(path), output_h5=h5file)
+        plot_data(h5file)
+
+
+
+ 
+    
+if 0:
+    t,r,v,snr,dur,diams = read_spade(dirname="../beamparks/uhf/2021.11.29/leo_bpark_2.1u_SW@uhf/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")
+
+    t,r,v,snr,dur,diams = read_spade(dirname="../beamparks/uhf/2021.11.25/leo_bpark_2.1u_SW@uhf/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")
+
+    t,r,v,snr,dur,diams = read_spade(dirname="../beamparks/uhf/2021.11.23/leo_bpark_2.1u_NO@uhf/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")
 
     
     t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/esr/2021.11.25/leo_bpark_2.2_SW@42m/*/*.txt",output_h5="out.h5")
     plot_data("out.h5")    
+    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2021.11.25/leo_bpark_2.1u_SW@uhf/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")
 
+    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2021.11.23/leo_bpark_2.1u_NO@uhf/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")
+    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/esr/2021.11.23/leo_bpark_2.2_SW@32m/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")
+    
+    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2018.01.04/leo_bpark_2.1u_NO@uhf/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")
+    
+    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2018.01.04/leo_bpark_2.1u_NO@uhf/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")    
     t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/esr/2021.11.29/leo_bpark_2.2_SW@42m/*/*.txt",output_h5="out.h5")
     plot_data("out.h5")
     
-    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/esr/2021.11.23/leo_bpark_2.2_SW@32m/*/*.txt",output_h5="out.h5")
-    plot_data("out.h5")
+
+    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2019.04.02/leo_bpark_2.1u_NO@uhf/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")    
+    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2019.04.05/leo_bpark_2.1u_NO@uhf/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")    
+
+    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2021.04.12/leo_bpark_2.1u_NO@uhf/*/*.txt",output_h5="out.h5")
+    plot_data("out.h5")    
+
     
     t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/esr/2021.11.19/leo_bpark_2.2_SW@32m/*/*.txt",output_h5="out.h5")
     plot_data("out.h5")
 
     t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2021.11.29/leo_bpark_2.1u_SW@uhf/*/*.txt",output_h5="out.h5")
     plot_data("out.h5")
-    
-    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2021.11.25/leo_bpark_2.1u_SW@uhf/*/*.txt",output_h5="out.h5")
-    plot_data("out.h5")
 
-    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2021.11.23/leo_bpark_2.1u_NO@uhf/*/*.txt",output_h5="out.h5")
-    plot_data("out.h5")
-    
-    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2018.01.04/leo_bpark_2.1u_NO@uhf/*/*.txt",output_h5="out.h5")
-    plot_data("out.h5")
-    
-    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2018.01.04/leo_bpark_2.1u_NO@uhf/*/*.txt",output_h5="out.h5")
-    plot_data("out.h5")    
 
-    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2019.04.02/leo_bpark_2.1u_NO@uhf/*/*.txt",output_h5="out.h5")
-    plot_data("out.h5")    
-
-    t,r,v,snr,dur,diams = read_spade(dirname="beampark_data/uhf/2021.04.12/leo_bpark_2.1u_NO@uhf/*/*.txt",output_h5="out.h5")
-    plot_data("out.h5")    
-
+if __name__ == "__main__":
+    plot_spade("esr/2021.11.19/leo_bpark_2.2_SW@32m")
+    plot_spade("esr/2021.11.23/leo_bpark_2.2_SW@32m")
+    plot_spade("esr/2021.11.25/leo_bpark_2.2_SW@42m")
+    plot_spade("esr/2021.11.29/leo_bpark_2.2_SW@42m")
+    plot_spade("uhf/2018.01.04/leo_bpark_2.1u_NO@uhf")
+    plot_spade("uhf/2018.01.04/leo_bpark_2.1u_NO@uhf")
+    plot_spade("uhf/2019.04.02/leo_bpark_2.1u_NO@uhf")
+    plot_spade("uhf/2019.04.05/leo_bpark_2.1u_NO@uhf")
+    plot_spade("uhf/2021.04.12/leo_bpark_2.1u_NO@uhf")
+    plot_spade("uhf/2021.11.23/leo_bpark_2.1u_NO@uhf")
+    plot_spade("uhf/2021.11.23/leo_bpark_2.1u_NO@uhf")
+    plot_spade("uhf/2021.11.25/leo_bpark_2.1u_SW@uhf")
+    plot_spade("uhf/2021.11.25/leo_bpark_2.1u_SW@uhf")
+    plot_spade("uhf/2021.11.29/leo_bpark_2.1u_SW@uhf")
+    plot_spade("uhf/2021.11.29/leo_bpark_2.1u_SW@uhf")
 
