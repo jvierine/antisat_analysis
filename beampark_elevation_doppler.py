@@ -4,9 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from astropy.time import Time, TimeDelta
-
 import scipy.optimize as sio
-import numpy as np
 import h5py
 
 try:
@@ -62,7 +60,12 @@ def get_range_and_range_rate(station, states):
 
 def plot_inclination_results(anom, Omega, angle, ranges, range_rates, samples, orb_hits=None):
     fig, ax = plt.subplots()
-    pc = ax.pcolormesh(anom.reshape(samples), Omega.reshape(samples), angle.reshape(samples), shading='gouraud')
+    pc = ax.pcolormesh(
+        anom.reshape(samples), 
+        Omega.reshape(samples), 
+        angle.reshape(samples), 
+        shading='gouraud',
+    )
     fig.colorbar(pc, ax=ax)
     if orb_hits is not None:
         for x in orb_hits:
@@ -72,9 +75,19 @@ def plot_inclination_results(anom, Omega, angle, ranges, range_rates, samples, o
     axes = [ax]
 
     fig, ax = plt.subplots(1, 2)
-    pc = ax[0].pcolormesh(anom.reshape(samples), Omega.reshape(samples), ranges.reshape(samples), shading='gouraud')
+    pc = ax[0].pcolormesh(
+        anom.reshape(samples), 
+        Omega.reshape(samples), 
+        ranges.reshape(samples), 
+        shading='gouraud',
+    )
     fig.colorbar(pc, ax=ax[0])
-    pc = ax[1].pcolormesh(anom.reshape(samples), Omega.reshape(samples), range_rates.reshape(samples), shading='gouraud')
+    pc = ax[1].pcolormesh(
+        anom.reshape(samples), 
+        Omega.reshape(samples), 
+        range_rates.reshape(samples), 
+        shading='gouraud',
+    )
     fig.colorbar(pc, ax=ax[1])
 
     figs += [fig]
@@ -123,7 +136,7 @@ def orb_to_range_and_range_rate(x, epoch, st, semi_major_axis, inclination):
 
 def main():
 
-    parser = argparse.ArgumentParser(description='Calculate the doppler-inclination correlation for a beampark')
+    parser = argparse.ArgumentParser(description='Calculate doppler-inclination correlation for a beampark')
     parser.add_argument('radar', type=str, help='The observing radar system')
     parser.add_argument('cache', type=str, help='Cache location')
     parser.add_argument('azimuth', type=float, help='Azimuth of beampark')
@@ -236,13 +249,13 @@ def main():
                     orb_hits += [x_start2]
 
                 if all_obs[1][-1][1] > all_obs[0][-1][1]:
-                   _x = all_obs[1][-1]
-                   all_obs[1][-1] = all_obs[0][-1]
-                   all_obs[0][-1] = _x
+                    _x = all_obs[1][-1]
+                    all_obs[1][-1] = all_obs[0][-1]
+                    all_obs[0][-1] = _x
 
-                   _x = all_hits[1][-1] 
-                   all_hits[1][-1] = all_hits[0][-1]
-                   all_hits[0][-1] = _x
+                    _x = all_hits[1][-1] 
+                    all_hits[1][-1] = all_hits[0][-1]
+                    all_hits[0][-1] = _x
 
         for node in range(2):
             all_obs[node] = np.squeeze(np.array(all_obs[node])).T
@@ -250,19 +263,27 @@ def main():
             hf.create_dataset(dataset_key + f'_node{node}_obs', data=all_obs[node])
             hf.create_dataset(dataset_key + f'_node{node}_hit', data=all_hits[node])
 
-            # figs, axes = plot_inclination_results(anom, Omega, angle, ranges, range_rates, samples, orb_hits=orb_hits)
+            # figs, axes = plot_inclination_results(
+            #     anom, 
+            #     Omega, 
+            #     angle, 
+            #     ranges, 
+            #     range_rates, 
+            #     samples, 
+            #     orb_hits=orb_hits,
+            # )
             # plt.show()
 
     fig = plt.figure()
     axes = [
-        fig.add_subplot(3,1,1),
+        fig.add_subplot(3, 1, 1),
         [
-            fig.add_subplot(3,2,3),
-            fig.add_subplot(3,2,4),
+            fig.add_subplot(3, 2, 3),
+            fig.add_subplot(3, 2, 4),
         ],
         [
-            fig.add_subplot(3,2,5),
-            fig.add_subplot(3,2,6),
+            fig.add_subplot(3, 2, 5),
+            fig.add_subplot(3, 2, 6),
         ],
     ]
     nodes = {
@@ -279,9 +300,24 @@ def main():
             all_obs[node] = hf[dataset_key + f'_node{node}_obs'][()]
             all_hits[node] = hf[dataset_key + f'_node{node}_hit'][()]
 
-            axes[0].plot(all_obs[node][0, :], all_obs[node][1, :], '-' + col, label=f'{nodes[node]}. @ {inclination:.2f} deg incl.')
-            axes[1][node].plot(all_obs[node][0, :], all_hits[node][0, :], '-' + col, label=f'{nodes[node]}. @ {inclination:.2f} deg incl.')
-            axes[2][node].plot(all_obs[node][0, :], all_hits[node][1, :], '-' + col, label=f'{nodes[node]}. @ {inclination:.2f} deg incl.')
+            axes[0].plot(
+                all_obs[node][0, :], 
+                all_obs[node][1, :], 
+                '-' + col, 
+                label=f'{nodes[node]}. @ {inclination:.2f} deg incl.',
+            )
+            axes[1][node].plot(
+                all_obs[node][0, :], 
+                all_hits[node][0, :], 
+                '-' + col, 
+                label=f'{nodes[node]}. @ {inclination:.2f} deg incl.',
+            )
+            axes[2][node].plot(
+                all_obs[node][0, :], 
+                all_hits[node][1, :], 
+                '-' + col, 
+                label=f'{nodes[node]}. @ {inclination:.2f} deg incl.',
+            )
     axes[0].legend()
     for node in range(2):
         axes[1][node].legend()
@@ -299,4 +335,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
