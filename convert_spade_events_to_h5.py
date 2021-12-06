@@ -6,6 +6,11 @@ import numpy as np
 import pandas as pd
 import h5py
 
+'''Example usage:
+
+python convert_spade_events_to_h5.py ./leo_bpark_2.1u_CN@uhf/ ./h5/leo.h5
+'''
+
 
 def date2unix(year, month, day, hour, minute, second):
     dt = datetime.datetime(year, month, day, hour, minute, second)
