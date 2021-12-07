@@ -68,6 +68,16 @@ def plot_correlation_residuals(observed_data, simulated_data, axes=None):
     return fig, axes
 
 
+def draw_ellipse(x_size, y_size, ax, res=100, style='-r'):
+    th = np.linspace(0, np.pi*2, res)
+    ex = np.cos(th)*x_size
+    ey = np.sin(th)*y_size
+
+    ax.plot(ex, ey, style)
+    return ax
+
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Analyse beampark correlation for a beampark')
     parser.add_argument('input', type=str, help='Input correlation data')
@@ -79,10 +89,21 @@ if __name__ == '__main__':
     with open(input_pth, 'rb') as fh:
         indecies, metric, cdat = pickle.load(fh)
 
+    x = metric['dr']*1e-3
+    y = metric['dv']*1e-3
+    inds = np.logical_not(np.logical_or(np.isnan(x), np.isnan(y)))
+    x = x[inds]
+    y = y[inds]
+
     fig, ax = plt.subplots(1, 1, figsize=(15, 15))
-    ax.plot(metric['dr'], metric['dv'], '.b')
-    ax.set_xlabel('Range residuals [m]')
-    ax.set_ylabel('Range-rate residuals [m/s]')
+    ax.plot(x, y, '.b')
+    ax.plot([0, 0], [y.min(), y.max()], '-r')
+    ax.plot([x.min(), x.max()], [0, 0], '-r')
+
+    draw_ellipse(1.0, 0.02, ax)
+
+    ax.set_xlabel('Range residuals [km]')
+    ax.set_ylabel('Range-rate residuals [km/s]')
 
     # fig, axes = plt.subplots(2, 3, figsize=(15, 15))
     # plot_measurement_data(dat, cdat[0][0], axes=axes[:, 0],)

@@ -75,7 +75,7 @@ def run():
     parser.add_argument('radar', type=str, help='The observing radar system')
     parser.add_argument('catalog', type=str, help='TLE catalog path')
     parser.add_argument('input', type=str, help='Observation data folder')
-    parser.add_argument('output', type=str, help='Results output location')
+    parser.add_argument('output', type=str, help='Results output folder')
     parser.add_argument('-o', '--override', action='store_true', help='Override output location if it exists')
     parser.add_argument('--std', action='store_true', help='Use measurement errors')
 
@@ -100,11 +100,24 @@ def run():
     else:
         meta_vars = []
 
-    measurements = []
-    if output_pth.is_file() and not args.override:
-        print('Using cached data, not reading measurements file')
-    else:
-        for in_file in input_pth.glob('**/*.h5'):
+
+    print('Loading TLE population')
+    pop = sorts.population.tle_catalog(tle_pth, cartesian=False)
+    print(f'Population size: {len(pop)}')
+
+    # correlate requires output in ECEF 
+    pop.out_frame = 'ITRS'
+
+    input_files = list(input_pth.glob('**/*.h5'))
+
+    for fid, file in enumerate(input_files):
+
+        output = output_pth / f'input{fid}.pickle'
+
+        if output.is_file() and not args.override:
+            print('Using cached data, not reading measurements file')
+            continue
+        else:
 
             # Each entry in the input `measurements` list must be a dictionary that contains the following fields:
             #   * 't': [numpy.ndarray] Times relative epoch in seconds
@@ -113,8 +126,8 @@ def run():
             #   * 'epoch': [astropy.Time] epoch for measurements
             #   * 'tx': [sorts.TX] Pointer to the TX station
             #   * 'rx': [sorts.RX] Pointer to the RX station
-            print('Loading monostatic measurements')
-            with h5py.File(str(in_file), 'r') as h_det:
+            print(f'Loading monostatic measurements {file}')
+            with h5py.File(str(file), 'r') as h_det:
                 r = h_det['r'][()]*1e3  # km -> m, one way
                 t = h_det['t'][()]  # Unix seconds
                 v = h_det['v'][()]*1e3  # km/s -> m/s
@@ -138,8 +151,8 @@ def run():
                 #
                 # #######################
                 dat = {
-                    'r': r*2, # two way
-                    'v': v*2, # two way
+                    'r': r*2,
+                    'v': v*2,
                     't': t,
                     'epoch': epoch,
                     'tx': radar.tx[0],
@@ -151,46 +164,39 @@ def run():
                     dat['r_std'] = h_det['r_std'][()]*1e3
                     dat['v_std'] = h_det['v_std'][()]*1e3
 
-                measurements.append(dat)
+                measurements = [dat]
 
-    print('Loading TLE population')
-    pop = sorts.population.tle_catalog(tle_pth, cartesian=False)
+        print('Correlating data and population')
 
-    # correlate requires output in ECEF 
-    pop.out_frame = 'ITRS'
+        if output.is_file() and not args.override:
+            print('Loading correlation data from cache')
+            with open(output, 'rb') as fh:
+                indecies, metric, cdat = pickle.load(fh)
+        else:
+            if comm is not None:
+                comm.barrier()
 
-    print(f'Population size: {len(pop)}')
-    print('Correlating data and population')
+            indecies, metric, cdat = sorts.correlate(
+                measurements = measurements,
+                population = pop,
+                n_closest = 1,
+                meta_variables=meta_vars,
+                metric=metric, 
+                sorting_function=sorting_function,
+                metric_dtype=[('dr', np.float64), ('dv', np.float64)],
+                metric_reduce=lambda x, y: x + y,
+            )
 
-    if output_pth.is_file() and not args.override:
-        print('Loading correlation data from cache')
-        with open(output_pth, 'rb') as fh:
-            indecies, metric, cdat = pickle.load(fh)
-    else:
-        if comm is not None:
-            comm.barrier()
-
-        indecies, metric, cdat = sorts.correlate(
-            measurements = measurements,
-            population = pop,
-            n_closest = 1,
-            meta_variables=meta_vars,
-            metric=metric, 
-            sorting_function=sorting_function,
-            metric_dtype=[('dr', np.float64), ('dv', np.float64)],
-            metric_reduce=None,
-        )
+            if comm is None or comm.rank == 0:
+                with open(output, 'wb') as fh:
+                     pickle.dump([indecies, metric, cdat], fh)
 
         if comm is None or comm.rank == 0:
-            with open(output_pth, 'wb') as fh:
-                 pickle.dump([indecies, metric, cdat], fh)
-
-    if comm is None or comm.rank == 0:
-        print('Individual measurement match metric:')
-        for mind, (ind, dst) in enumerate(zip(indecies.T, metric.T)):
-            print(f'measurement = {mind}')
-            for res in range(len(ind)):
-                print(f'-- result rank = {res} | object ind = {ind[res]} | metric = {dst[res]} | obj = {pop["oid"][ind[res]]}')
+            print('Individual measurement match metric:')
+            for mind, (ind, dst) in enumerate(zip(indecies.T, metric.T)):
+                print(f'measurement = {mind}')
+                for res in range(len(ind)):
+                    print(f'-- result rank = {res} | object ind = {ind[res]} | metric = {dst[res]} | obj = {pop["oid"][ind[res]]}')
 
 
 if __name__ == '__main__':
