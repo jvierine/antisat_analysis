@@ -16,6 +16,13 @@ from astropy.time import Time
 
 import sorts
 
+'''
+Examples:
+
+python beampark_correlator.py eiscat_uhf ~/data/spade/beamparks/uhf/2015.10.22/space-track.tles ~/data/spade/beamparks/uhf/2015.10.22/h5/leo.h5 ~/data/spade/beamparks/uhf/2015.10.22/correlation.pickle
+mpirun -n 6 ./beampark_correlator.py eiscat_uhf ~/data/spade/beamparks/uhf/2015.10.22/space-track.tles ~/data/spade/beamparks/uhf/2015.10.22/h5/leo.h5 ~/data/spade/beamparks/uhf/2015.10.22/correlation.pickle -o
+'''
+
 try:
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
@@ -146,7 +153,7 @@ def run():
             v = -v  # Inverted definition of range rate, one way
 
             inds = np.argsort(t)
-            inds = inds[:12] #FOR DEBUG
+            # inds = inds[:12] #FOR DEBUG
             t = t[inds]
             r = r[inds]
             v = v[inds]
