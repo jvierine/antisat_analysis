@@ -29,72 +29,21 @@ try:
 except ImportError:
     comm = None
 
-def plot_measurement_data(observed_data, simulated_data, axes=None):
-    '''Plot the observed and simulated population object measurment parameters.
-    '''
-    t = observed_data['t']
-    r = observed_data['r']
-    v = observed_data['v']
-    r_ref = simulated_data['r_ref']
-    v_ref = simulated_data['v_ref']
-
-    if axes is None:
-        fig, axes = plt.subplots(1, 2, figsize=(15, 15))
-    else:
-        fig = None
-
-    axes[0].plot(t - t[0], r*1e-3, label='measurement')
-    axes[0].plot(t - t[0], r_ref*1e-3, label='simulation')
-    axes[0].set_ylabel('Range [km]')
-    axes[0].set_xlabel('Time [s]')
-
-    axes[1].plot(t - t[0], v*1e-3, label='measurement')
-    axes[1].plot(t - t[0], v_ref*1e-3, label='simulation')
-    axes[1].set_ylabel('Velocity [km/s]')
-    axes[1].set_xlabel('Time [s]')
-
-    axes[1].legend()
-
-    return fig, axes
-
-
-def plot_correlation_residuals(observed_data, simulated_data, axes=None):
-    '''Plot the correlation residuals between the measurement and simulated population object.
-    '''
-    t = observed_data['t']
-    r = observed_data['r']
-    v = observed_data['v']
-    r_ref = simulated_data['r_ref']
-    v_ref = simulated_data['v_ref']
-
-    if axes is None:
-        fig, axes = plt.subplots(2, 2, figsize=(15, 15))
-    else:
-        fig = None
-    
-    axes[0, 0].hist((r_ref - r)*1e-3)
-    axes[0, 0].set_xlabel('Range residuals [km]')
-
-    axes[0, 1].hist((v_ref - v)*1e-3)
-    axes[0, 1].set_xlabel('Velocity residuals [km/s]')
-    
-    axes[1, 0].plot(t - t[0], (r_ref - r)*1e-3)
-    axes[1, 0].set_ylabel('Range residuals [km]')
-    axes[1, 0].set_xlabel('Time [s]')
-
-    axes[1, 1].plot(t - t[0], (v_ref - v)*1e-3)
-    axes[1, 1].set_ylabel('Velocity residuals [km/s]')
-    axes[1, 1].set_xlabel('Time [s]')
-
-    return fig, axes
-
 
 def vector_diff_metric(t, r, v, r_ref, v_ref, **kwargs):
+    '''Return a vector of residuals for range and range rate.
+    '''
+    ret = np.empty((len(t),), dtype=[('dr', np.float64), ('dv', np.float64)])
+    ret['dr'] = r_ref - r
+    ret['dv'] = v_ref - v
+    return ret
+
+
+def vector_diff_metric_std_normalized(t, r, v, r_ref, v_ref, **kwargs):
     '''Return a vector of measurnment error scaled residuals for range and range rate.
     '''
     r_std = kwargs.get('r_std')
     v_std = kwargs.get('v_std')
-
     dr = (r_ref - r)/r_std
     dv = (v_ref - v)/v_std
     
@@ -119,14 +68,20 @@ def run():
         if comm.size > 1:
             print('Using MPI...')
 
-    parser = argparse.ArgumentParser(description='Calculate doppler-inclination correlation for a beampark')
+    parser = argparse.ArgumentParser(description='Calculate TLE catalog correlation for a beampark')
     parser.add_argument('radar', type=str, help='The observing radar system')
     parser.add_argument('catalog', type=str, help='TLE catalog path')
     parser.add_argument('input', type=str, help='Observation data location')
     parser.add_argument('output', type=str, help='Results output location')
     parser.add_argument('-o', '--override', action='store_true', help='Override output location if it exists')
+    parser.add_argument('--std', action='store_true', help='Use measurement errors')
 
     args = parser.parse_args()
+
+    if args.std:
+        metric = vector_diff_metric_std_normalized
+    else:
+        metric = vector_diff_metric
 
     radar = getattr(sorts.radars, args.radar)
 
@@ -173,14 +128,23 @@ def run():
             dat = {
                 'r': r*2,
                 'v': v*2,
-                'r_std': r*2*0.01,
-                'v_std': v*2*0.01,
                 't': t,
                 'epoch': epoch,
                 'tx': radar.tx[0],
                 'rx': radar.rx[0],
                 'measurement_num': len(t),
             }
+
+            if args.std:
+                dat['r_std'] = h_det['r_std'][()]*1e3
+                dat['v_std'] = h_det['v_std'][()]*1e3
+                meta_vars = [
+                    'r_std',
+                    'v_std',
+                ]
+            else:
+                meta_vars = []
+
 
     print('Loading TLE population')
     pop = sorts.population.tle_catalog(tle_pth, cartesian=False)
@@ -203,11 +167,8 @@ def run():
             measurements = [dat],
             population = pop,
             n_closest = 1,
-            meta_variables=[
-                'r_std',
-                'v_std',
-            ],
-            metric=vector_diff_metric, 
+            meta_variables=meta_vars,
+            metric=metric, 
             sorting_function=sorting_function,
             metric_dtype=[('dr', np.float64), ('dv', np.float64)],
             metric_reduce=None,
@@ -223,11 +184,6 @@ def run():
             print(f'measurement = {mind}')
             for res in range(len(ind)):
                 print(f'-- result rank = {res} | object ind = {ind[res]} | metric = {dst[res]} | obj = {pop["oid"][ind[res]]}')
-
-        # fig, axes = plt.subplots(2, 3, figsize=(15, 15))
-        # plot_measurement_data(dat, cdat[0][0], axes=axes[:, 0],)
-        # plot_correlation_residuals(dat, cdat[0][0], axes=axes[:, 1:])
-        # plt.show()
 
 
 if __name__ == '__main__':
