@@ -9,9 +9,9 @@ def get_data():
 
     pars=[]
     for f in fl:
-        print(f)
+        #print(f)
         h=h5py.File(f,"r")
-        print(h.keys())
+        #print(h.keys())
         if h["range_rate0"][()] < h["range_rate1"][()]:
             rr0=h["range_rate0"][()]
             rr1=h["range_rate1"][()]

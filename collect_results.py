@@ -13,6 +13,10 @@ import plot_bp_obs_par as pobs
 def read_spade(dirname="uhf/2019.04.02/2019040[2-3]_*/*.txt",output_h5="out.h5"):
 
     fl=glob.glob(dirname)
+
+    if len(fl) == 0:
+        raise FileNotFoundError('No result files')
+
     fl.sort()
 
     t0s=[]
@@ -47,7 +51,7 @@ def read_spade(dirname="uhf/2019.04.02/2019040[2-3]_*/*.txt",output_h5="out.h5")
             edur=a[ai,21]
             tp=a[ai,22]
             flag=a[ai,23]
-            print("n %d %f"%(oi,vdop))
+            # print("n %d %f"%(oi,vdop))
             oi+=1
             #        print(flag)
             #       if flag == 0.0:
@@ -65,7 +69,7 @@ def read_spade(dirname="uhf/2019.04.02/2019040[2-3]_*/*.txt",output_h5="out.h5")
     snr=n.array(rts)**2.0
     dur=n.array(durs)
     diams=n.array(diams)
-    
+
     # store in hdf5 format
     ho=h5py.File(output_h5,"w")
     ho["t"]=t    # t
@@ -121,7 +125,7 @@ def plot_data(fname, velmin=-2.3, velmax=2.3):
     
     # info on d and r
     
-    print(n.min(snr))
+    #print(n.min(snr))
     H,x,y=n.histogram2d(rgs,10.0*n.log10(snr),range=[[0,3000],[0,80]],bins=(20,40))
 
     
@@ -203,6 +207,7 @@ def plot_spade(reldir, toplevel_dir = '../beamparks/'):
  
     
 if 0:
+    # Original style for reading and plotting datasets.  See __main__ code below for new style
     t,r,v,snr,dur,diams = read_spade(dirname="../beamparks/uhf/2021.11.29/leo_bpark_2.1u_SW@uhf/*/*.txt",output_h5="out.h5")
     plot_data("out.h5")
 
