@@ -55,8 +55,9 @@ try:
 except AssertionError:
     dt0 = datetime.strptime(args.start_date, _iso_fmt)
 
-print(f'Getting TLEs for the range [{dt0} -> {dt1}]')
-print(f'Output to {args.output}')
+if args.output is not sys.stdout:
+    print(f'Getting TLEs for the range [{dt0} -> {dt1}]')
+    print(f'Output to {args.output.name}')
 
 drange = spacetrack.operators.inclusive_range(dt0, dt1)
 
