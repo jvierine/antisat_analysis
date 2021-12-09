@@ -5,9 +5,7 @@ import argparse
 import pathlib
 from datetime import datetime, timedelta
 import subprocess
-
 import codecs
-
 import spacetrack 
 
 
@@ -37,8 +35,8 @@ parser.add_argument('start_date', type=str, nargs='?', default='7d',
 parser.add_argument('end_date', type=str, nargs='?', default='now',
                 help='End date of snapshot [ISO]')
 parser.add_argument('output', nargs='?', type=argparse.FileType('w'), default=sys.stdout)
-parser.add_argument('--secret-tool-key', '-stkey', nargs=1)
-# parser.add_argument('--credentials', nargs=1, help='TLE target output file')
+parser.add_argument('--secret-tool-key', '-k', nargs=1)
+parser.add_argument('--credentials', '-c', nargs=1, help='File containing username and password for space-track.org')
 
 args = parser.parse_args()
 
@@ -61,14 +59,14 @@ if args.output is not sys.stdout:
 
 drange = spacetrack.operators.inclusive_range(dt0, dt1)
 
-if len(args.secret_tool_key):
+if args.secret_tool_key is not None:
     res = subprocess.run(['secret-tool', 'lookup', 'username'] + args.secret_tool_key, 
                         capture_output=True, text=True)
     user = res.stdout
     res = subprocess.run(['secret-tool', 'lookup', 'password'] + args.secret_tool_key, 
                         capture_output=True, text=True)
     passwd = res.stdout
-elif len(args.credentials):
+elif args.credentials is not None:
     raise NotImplementedError('Add input of username/password from file')
 else:
     user = input("Username for space-track.org:")
