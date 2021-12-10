@@ -1,4 +1,5 @@
 import argparse
+from pathlib import Path
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -209,22 +210,22 @@ def build_cache(station, radar_name='generic', cache_dir='cache', azim=None, ele
     Datasets:
       nu_a(incl, sma):
         long name: mean anomaly for ascending transit
-        units: radians
+        units: degrees
       nu_d(incl, sma):
         long name: mean anomaly for descending transit
-        units: radians
+        units: degrees
       Om_a(incl, sma):
         long name: longitude of ascending node for ascending transit
-        units: radians
+        units: degrees
       Om_d(incl, sma):
         long name: longitude of ascending node for descending transit
-        units: radians
+        units: degrees
       theta_a(incl, sma):
         long name: minimum off-axis angle for ascending transit
-        units: radians
+        units: degrees
       theta_d(incl, sma):
         long name: minimum off-axis angle for descending transit
-        units: radians
+        units: degrees
       r_a(incl, sma):
         long name: range at minimum off-axis angle for ascending transit
         units: metres
@@ -242,7 +243,7 @@ def build_cache(station, radar_name='generic', cache_dir='cache', azim=None, ele
     _2pi = 2 * np.pi
 
     cpath = cache_path(station, radar_name=radar_name,
-                    cache_dir=cache_dir, azim=azim, elev=azim, degrees=degrees)
+                    topdir=cache_dir, azim=azim, elev=azim, degrees=degrees)
 
     if cpath.exists() and not clobber:
         raise FileExistsError('Cache file {cpath.name} exists in cache')
@@ -290,16 +291,81 @@ def build_cache(station, radar_name='generic', cache_dir='cache', azim=None, ele
         var.attrs['units'] = units
         var.attrs['valid_range'] = valid_range
 
-    _create_ia_var('nu_a', 'mean anomaly for ascending transit', 'radians', (0.0, _2pi))
-    _create_ia_var('nu_d', 'mean anomaly for descending transit', 'radians', (0.0, _2pi))
-    _create_ia_var('Om_a', 'longitude of ascending node for ascending transit', 'radians', (0.0, _2pi))
-    _create_ia_var('Om_d', 'longitude of ascending node for descending transit', 'radians', (0.0, _2pi))
-    _create_ia_var('theta_a', 'minimum off-axis angle for ascending transit', 'radians', (0.0, _2pi))
-    _create_ia_var('theta_d', 'minimum off-axis angle for descending transit', 'radians', (0.0, _2pi))
+    _create_ia_var('nu_a', 'mean anomaly for ascending transit', 'degrees', (0.0, 360.0))
+    _create_ia_var('nu_d', 'mean anomaly for descending transit', 'degrees', (0.0, 360.0))
+    _create_ia_var('Om_a', 'longitude of ascending node for ascending transit', 'degrees', (0.0, 360.0))
+    _create_ia_var('Om_d', 'longitude of ascending node for descending transit', 'degrees', (0.0, 360.0))
+    _create_ia_var('theta_a', 'minimum off-axis angle for ascending transit', 'degrees', (0.0, 360.0))
+    _create_ia_var('theta_d', 'minimum off-axis angle for descending transit', 'degrees', (0.0, 360.0))
     _create_ia_var('r_a', 'range at minimum off-axis angle for ascending transit', 'metres', (1e0, 1e12))
     _create_ia_var('r_d', 'range at minimum off-axis angle for descending transit', 'metres', (1e0, 1e12))
     _create_ia_var('rdot_a', 'range rate at minimum off-axis angle for ascending transit', 'metres/second', (1e0, 1e12))
     _create_ia_var('rdot_d', 'range rate at minimum off-axis angle for descending transit', 'metres/second', (1e0, 1e12))
+
+    # First some invariants
+    epoch = Time("2000-01-01T00:10:00Z", format='isot')
+    samples = 101, 103  # for mean anomaly and longitude of ascending node, respectively
+    # Now start looking for orbits that intersect the pointing of the beam
+    anom, Omega = np.meshgrid(
+        np.linspace(0, 360, num=samples[0]),
+        np.linspace(0, 360, num=samples[1]),
+        indexing='ij',
+    )
+    anom.shape = -1             # unravel
+    Omega.shape = -1
+
+    k_ecef = station.pointing_ecef
+    orbit = pyorb.Orbit(
+        M0 = pyorb.M_earth,
+        degrees = True,
+        a = sema[0],
+        e = 0,
+        i = 0,
+        omega = 0,
+        Omega = Omega,
+        anom = anom,
+        num = anom.size,
+        type = 'mean',
+    )
+    for ii, inci in enumerate(incl):
+        orbit.i = inci
+
+        print(f"inclination: {inci}")
+        for kk, a in enumerate(sema):
+            orbit.a = a
+
+            states = orbit.cartesian
+            ecef = sorts.frames.convert(epoch, states, in_frame='GCRS', out_frame='ITRS')
+            angle = np.degrees(get_off_axis_angle(station, ecef, k_ecef))
+
+            ranges, range_rates = get_range_and_range_rate(station, ecef)
+            inds = np.argsort(angle)
+            x_start = [anom[inds[0]], Omega[inds[0]]]
+            # Find first minimum
+            xhat1 = sio.minimize(
+                lambda x: optim_off_axis_angle(x, epoch, station, k_ecef, a, inci),
+                x_start,
+                method='Nelder-Mead',
+            )
+
+            # Clever trick here.
+            # Find the index of the smallest angle which satisfies the inequality
+            other_ind = np.argmax(np.abs(anom[inds] - anom[inds[0]]) > 5.0)
+            x_start2 = [anom[inds[other_ind]], Omega[inds[other_ind]]]
+            xhat2 = sio.minimize(
+                lambda x: optim_off_axis_angle(x, epoch, station, k_ecef, a, inci),
+                x_start2,
+                method='Nelder-Mead',
+            )
+
+            # now we have two solutions, figure out if they are distinct,
+            # which one is ascending and descending, and their ranges and range rates,
+            # then put all of those (and the off-axis angles) into the file
+
+            print(".", end="")
+        print("")
+
+
 
 
 
