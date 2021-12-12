@@ -1,3 +1,4 @@
+import sys
 import argparse
 from pathlib import Path
 
@@ -248,125 +249,148 @@ def build_cache(station, radar_name='generic', cache_dir='cache', azim=None, ele
     if cpath.exists() and not clobber:
         raise FileExistsError('Cache file {cpath.name} exists in cache')
 
-    ds = h5py.File(cpath, 'w')
+    if azim is None:
+        azim = station.beam.azimuth
+    if elev is None:
+        elev = station.beam.elevation
 
-    # Create global attributes for dataset
-    ds.attrs['radar_name'] = radar_name
+    with h5py.File(cpath, 'w') as ds:
 
-    # Create scalar variables for dataset constants
-    def _create_scalar_var(name, long_name, units, value):
-        ds[name] = value
-        var = ds[name]
-        var.attrs['long_name'] = long_name
-        var.attrs['units'] = units
+        # Create global attributes for dataset
+        ds.attrs['radar_name'] = radar_name
 
-    _create_scalar_var('site_lat', 'Geodetic latitude of site', 'degrees', station.lat)
-    _create_scalar_var('site_lon', 'Geodetic longitude of site', 'degrees', station.lon)
-    _create_scalar_var('site_alt', 'Altitude above MSL of site', 'metres', station.alt)
-    _create_scalar_var('azim', 'Azimuth of pointing direction', 'degrees', azim)
-    _create_scalar_var('elev', 'Elevation of pointing direction', 'degrees', elev)
+        # Create scalar variables for dataset constants
+        def _create_scalar_var(name, long_name, units, value):
+            ds.create_dataset(name, shape=(), data=value)
+            var = ds[name]
+            var.attrs['long_name'] = long_name
+            var.attrs['units'] = units
 
-    # Create dimension axis for orbit plane inclination
-    ds['incl'] = np.r_[50:130.1:0.5]
-    incl = ds['incl']
-    incl.make_scale('inclination')
-    incl.attrs['long_name'] = 'orbit plane inclination'
-    incl.attrs['units'] = 'degrees'
-    incl.attrs['valid_range'] = 0.0, 180.0
+        _create_scalar_var('site_lat', 'Geodetic latitude of site', 'degrees', station.lat)
+        _create_scalar_var('site_lon', 'Geodetic longitude of site', 'degrees', station.lon)
+        _create_scalar_var('site_alt', 'Altitude above MSL of site', 'metres', station.alt)
+        _create_scalar_var('azimuth',  'Azimuth of pointing direction', 'degrees', azim)
+        _create_scalar_var('elevation','Elevation of pointing direction', 'degrees', elev)
 
-    # Create dimension axis for orbit semimajor axis
-    ds['sema'] = 1000 * (6371 + np.linspace(300, 3000, 20))
-    sema = ds['sema']
-    sema.make_scale('semimajor_axis')
-    sema.attrs['long_name'] = 'orbit semimajor axis'
-    sema.attrs['units'] = 'metres'
-    sema.attrs['valid_range'] = 1e0, 1e12
+        # Create dimension axis for orbit plane inclination
+        ds['incl'] = np.r_[50:130.1:0.5]
+        incl = ds['incl']
+        incl.make_scale('inclination')
+        incl.attrs['long_name'] = 'orbit plane inclination'
+        incl.attrs['units'] = 'degrees'
+        incl.attrs['valid_range'] = 0.0, 180.0
 
-    def _create_ia_var(name, long_name, units, valid_range):
-        ds[name] = np.zeros((len(incl), len(sema)))
-        var = ds[name]
-        var.dims[0].attach_scale(incl)
-        var.dims[1].attach_scale(sema)
-        var.attrs['long_name'] = long_name
-        var.attrs['units'] = units
-        var.attrs['valid_range'] = valid_range
+        # Create dimension axis for orbit semimajor axis
+        ds['sema'] = 1000 * (6371 + np.linspace(300, 3000, 20))
+        sema = ds['sema']
+        sema.make_scale('semimajor_axis')
+        sema.attrs['long_name'] = 'orbit semimajor axis'
+        sema.attrs['units'] = 'metres'
+        sema.attrs['valid_range'] = 1e0, 1e12
 
-    _create_ia_var('nu_a', 'mean anomaly for ascending transit', 'degrees', (0.0, 360.0))
-    _create_ia_var('nu_d', 'mean anomaly for descending transit', 'degrees', (0.0, 360.0))
-    _create_ia_var('Om_a', 'longitude of ascending node for ascending transit', 'degrees', (0.0, 360.0))
-    _create_ia_var('Om_d', 'longitude of ascending node for descending transit', 'degrees', (0.0, 360.0))
-    _create_ia_var('theta_a', 'minimum off-axis angle for ascending transit', 'degrees', (0.0, 360.0))
-    _create_ia_var('theta_d', 'minimum off-axis angle for descending transit', 'degrees', (0.0, 360.0))
-    _create_ia_var('r_a', 'range at minimum off-axis angle for ascending transit', 'metres', (1e0, 1e12))
-    _create_ia_var('r_d', 'range at minimum off-axis angle for descending transit', 'metres', (1e0, 1e12))
-    _create_ia_var('rdot_a', 'range rate at minimum off-axis angle for ascending transit', 'metres/second', (1e0, 1e12))
-    _create_ia_var('rdot_d', 'range rate at minimum off-axis angle for descending transit', 'metres/second', (1e0, 1e12))
+        def _create_ia_var(name, long_name, units, valid_range):
+            ds[name] = np.zeros((len(incl), len(sema)))
+            var = ds[name]
+            var.dims[0].attach_scale(incl)
+            var.dims[1].attach_scale(sema)
+            var.attrs['long_name'] = long_name
+            var.attrs['units'] = units
+            var.attrs['valid_range'] = valid_range
 
-    # First some invariants
-    epoch = Time("2000-01-01T00:10:00Z", format='isot')
-    samples = 101, 103  # for mean anomaly and longitude of ascending node, respectively
-    # Now start looking for orbits that intersect the pointing of the beam
-    anom, Omega = np.meshgrid(
-        np.linspace(0, 360, num=samples[0]),
-        np.linspace(0, 360, num=samples[1]),
-        indexing='ij',
-    )
-    anom.shape = -1             # unravel
-    Omega.shape = -1
+        _create_ia_var('nu_a', 'mean anomaly for ascending transit', 'degrees', (0.0, 360.0))
+        _create_ia_var('nu_d', 'mean anomaly for descending transit', 'degrees', (0.0, 360.0))
+        _create_ia_var('Om_a', 'longitude of ascending node for ascending transit', 'degrees', (0.0, 360.0))
+        _create_ia_var('Om_d', 'longitude of ascending node for descending transit', 'degrees', (0.0, 360.0))
+        _create_ia_var('theta_a', 'minimum off-axis angle for ascending transit', 'degrees', (0.0, 360.0))
+        _create_ia_var('theta_d', 'minimum off-axis angle for descending transit', 'degrees', (0.0, 360.0))
+        _create_ia_var('r_a', 'range at minimum off-axis angle for ascending transit', 'metres', (1e0, 1e12))
+        _create_ia_var('r_d', 'range at minimum off-axis angle for descending transit', 'metres', (1e0, 1e12))
+        _create_ia_var('rdot_a', 'range rate at minimum off-axis angle for ascending transit', 'metres/second', (1e0, 1e12))
+        _create_ia_var('rdot_d', 'range rate at minimum off-axis angle for descending transit', 'metres/second', (1e0, 1e12))
 
-    k_ecef = station.pointing_ecef
-    orbit = pyorb.Orbit(
-        M0 = pyorb.M_earth,
-        degrees = True,
-        a = sema[0],
-        e = 0,
-        i = 0,
-        omega = 0,
-        Omega = Omega,
-        anom = anom,
-        num = anom.size,
-        type = 'mean',
-    )
-    for ii, inci in enumerate(incl):
-        orbit.i = inci
+        # First some invariants
+        epoch = Time("2000-01-01T00:10:00Z", format='isot')
+        samples = 101, 103  # for mean anomaly and longitude of ascending node, respectively
+        # Now start looking for orbits that intersect the pointing of the beam
+        anom, Omega = np.meshgrid(
+            np.linspace(0, 360, num=samples[0]),
+            np.linspace(0, 360, num=samples[1]),
+            indexing='ij',
+        )
+        anom.shape = -1             # unravel
+        Omega.shape = -1
 
-        print(f"inclination: {inci}")
-        for kk, a in enumerate(sema):
-            orbit.a = a
+        k_ecef = station.pointing_ecef
+        orbit = pyorb.Orbit(
+            M0 = pyorb.M_earth,
+            degrees = True,
+            a = sema[0],
+            e = 0,
+            i = 0,
+            omega = 0,
+            Omega = Omega,
+            anom = anom,
+            num = anom.size,
+            type = 'mean',
+        )
+        for ii, inci in enumerate(incl):
+            orbit.i = inci
 
-            states = orbit.cartesian
-            ecef = sorts.frames.convert(epoch, states, in_frame='GCRS', out_frame='ITRS')
-            angle = np.degrees(get_off_axis_angle(station, ecef, k_ecef))
+            print(f"inclination: {inci}")
+            for kk, a in enumerate(sema):
+                orbit.a = a
 
-            ranges, range_rates = get_range_and_range_rate(station, ecef)
-            inds = np.argsort(angle)
-            x_start = [anom[inds[0]], Omega[inds[0]]]
-            # Find first minimum
-            xhat1 = sio.minimize(
-                lambda x: optim_off_axis_angle(x, epoch, station, k_ecef, a, inci),
-                x_start,
-                method='Nelder-Mead',
-            )
+                states = orbit.cartesian
+                ecef = sorts.frames.convert(epoch, states, in_frame='GCRS', out_frame='ITRS')
+                angle = np.degrees(get_off_axis_angle(station, ecef, k_ecef))
 
-            # Clever trick here.
-            # Find the index of the smallest angle which satisfies the inequality
-            other_ind = np.argmax(np.abs(anom[inds] - anom[inds[0]]) > 5.0)
-            x_start2 = [anom[inds[other_ind]], Omega[inds[other_ind]]]
-            xhat2 = sio.minimize(
-                lambda x: optim_off_axis_angle(x, epoch, station, k_ecef, a, inci),
-                x_start2,
-                method='Nelder-Mead',
-            )
+                ranges, range_rates = get_range_and_range_rate(station, ecef)
+                inds = np.argsort(angle)
+                x_start = [anom[inds[0]], Omega[inds[0]]]
+                # Find first minimum
+                xhat1 = sio.minimize(
+                    lambda x: optim_off_axis_angle(x, epoch, station, k_ecef, a, inci),
+                    x_start,
+                    method='Nelder-Mead',
+                )
 
-            # now we have two solutions, figure out if they are distinct,
-            # which one is ascending and descending, and their ranges and range rates,
-            # then put all of those (and the off-axis angles) into the file
+                # Clever trick here.
+                # Find the index of the smallest angle which satisfies the inequality
+                other_ind = np.argmax(np.abs(anom[inds] - anom[inds[0]]) > 5.0)
+                x_start2 = [anom[inds[other_ind]], Omega[inds[other_ind]]]
+                xhat2 = sio.minimize(
+                    lambda x: optim_off_axis_angle(x, epoch, station, k_ecef, a, inci),
+                    x_start2,
+                    method='Nelder-Mead',
+                )
 
-            print(".", end="")
-        print("")
+                # now we have two solutions, figure out if they are distinct,
+                # which one is ascending and descending, and their ranges and range rates,
+                # then put all of those (and the off-axis angles) into the file
 
+                # ascending node is the one with smallest mean anomaly, put that in xhat1
 
+                if xhat1.x[0] > xhat2.x[0]:
+                    xhat1, xhat2 = xhat2, xhat1
 
+                r1, rdot1 = orb_to_range_and_range_rate(xhat1.x, epoch, station, a, inci)
+                r2, rdot2 = orb_to_range_and_range_rate(xhat2.x, epoch, station, a, inci)
+
+                # Store data
+                ds['nu_a'][ii,kk] = xhat1.x[0]
+                ds['nu_d'][ii,kk] = xhat2.x[0]
+                ds['Om_a'][ii,kk] = xhat1.x[0]
+                ds['Om_d'][ii,kk] = xhat2.x[0]
+                ds['theta_a'][ii,kk] = xhat1.fun
+                ds['theta_d'][ii,kk] = xhat2.fun
+                ds['r_a'][ii,kk] = r1[0]
+                ds['r_d'][ii,kk] = r2[0]
+                ds['rdot_a'][ii,kk] = rdot1[0]
+                ds['rdot_d'][ii,kk] = rdot2[0]
+
+                print(".", end="")
+                sys.stdout.flush()
+            print("")
 
 
 def main():
