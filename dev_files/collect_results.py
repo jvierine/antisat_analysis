@@ -81,7 +81,7 @@ def read_spade(dirname="uhf/2019.04.02/2019040[2-3]_*/*.txt",output_h5="out.h5")
     ho.close()
     return(t,r,v,snr,dur,diams)
     
-def plot_data(fname, velmin=-2.3, velmax=2.3):
+def plot_data(fname, velmin=-2.3, velmax=2.3, site='unknown', date=''):
 
 
     h=h5py.File(fname,"r")
@@ -110,10 +110,12 @@ def plot_data(fname, velmin=-2.3, velmax=2.3):
  #   cbar.set_label('Doppler shift (km/s)')
     plt.xlabel("Range (km)")
     plt.ylabel("Doppler velocity (km/s)")
+    #plt.title(f"Detections {site} {date}")
     plt.title("Detections")
     plt.ylim([-2.5,2.5])
     plt.subplot(122)
     plt.pcolormesh(y,x,H)
+    #plt.title(f"Histogram {site} {date}")
     plt.title("Histogram")
     plt.xlabel("Range (km)")
     plt.ylabel("Doppler velocity (km/s)")
@@ -121,6 +123,9 @@ def plot_data(fname, velmin=-2.3, velmax=2.3):
     pobs.plot_range_rates(pars,pincs=n.array([70,74,82,87,90,95,99,102]))
 #
     plt.colorbar()
+
+    fig = plt.gcf()
+    fig.suptitle(f'Observations at {site} {date}')
     plt.show()
     
     # info on d and r
@@ -130,22 +135,26 @@ def plot_data(fname, velmin=-2.3, velmax=2.3):
 
     
     plt.subplot(121)
-    plt.scatter(t0,rgs,c=cdops,lw=0,cmap="nipy_spectral",vmin=-2.5,vmax=2.5)
+    plt.scatter(t0/3600,rgs,c=cdops,lw=0,cmap="nipy_spectral",vmin=-2.5,vmax=2.5)
     
     cbar=plt.colorbar()
     cbar.set_label('Doppler shift (km/s)')
-    plt.xlabel("Time (s since %s)"%(stuffr.unix2datestr(t0s[0])))
+    plt.xlabel("Time (hrs since %s)"%(stuffr.unix2datestr(t0s[0])))
     plt.ylabel("Range (km)")
+    #plt.title(f"Detections {site} {date}")
     plt.title("Detections")
     plt.subplot(122)
     n_hours=(n.max(t0)-n.min(t0))/1800.0
     n_bins=int((n.max(t0)-n.min(t0))/1800.0)
     w=n_hours/n_bins
-    plt.hist(t0,bins=n_bins,weights=n.repeat(w,len(t0)) )
-    plt.xlabel("Time (s since %s)"%(stuffr.unix2datestr(t0s[0])))
+    plt.hist(t0/3600,bins=n_bins,weights=n.repeat(w,len(t0)) )
+    plt.xlabel("Time (hrs since %s)"%(stuffr.unix2datestr(t0s[0])))
     plt.ylabel("Detections per 30 minutes")
+    #plt.title(f"Histogram {site} {date}")
     plt.title("Histogram")
 
+    fig = plt.gcf()
+    fig.suptitle(f'Observations at {site} {date}')
     plt.show()
     
     
@@ -172,20 +181,22 @@ def plot_data(fname, velmin=-2.3, velmax=2.3):
         plt.show()
     
     v=n.array(v)
-    H,x,y=n.histogram2d(t0,v,range=[[0,n.max(t0)],[velmin,velmax]],bins=(int(n_hours),100))
+    H,x,y=n.histogram2d(t0/3600,v,range=[[0,n.max(t0/3600)],[velmin,velmax]],bins=(int(n_hours),100))
     
     plt.subplot(121)
-    plt.scatter(t0,v,c=rgs,lw=0,cmap="nipy_spectral")
+    plt.scatter(t0/3600,v,c=rgs,lw=0,cmap="nipy_spectral")
     plt.ylim([-2.5,2.5])
     plt.colorbar()
-    plt.xlabel("Time (s since %s)"%(stuffr.unix2datestr(t0s[0])))
+    plt.xlabel("Time (hrs since %s)"%(stuffr.unix2datestr(t0s[0])))
     plt.ylabel("Doppler velocity (km/s)")
     
+    fig = plt.gcf()
+    fig.suptitle(f'Observations at {site} {date}')
     
 
     plt.subplot(122)
     plt.pcolormesh(x,y,H.T)
-    plt.xlabel("Time (s since %s)"%(stuffr.unix2datestr(t0s[0])))
+    plt.xlabel("Time (hrs since %s)"%(stuffr.unix2datestr(t0s[0])))
     plt.ylabel("Doppler velocity (km/s)")
     
     plt.colorbar()
@@ -193,14 +204,15 @@ def plot_data(fname, velmin=-2.3, velmax=2.3):
     plt.show()
 
 
-def plot_spade(reldir, toplevel_dir = '../beamparks/'):
+def plot_spade(reldir, toplevel_dir = '../../beamparks/'):
     path = Path(toplevel_dir) / reldir / "*/*.txt"
+    site, date, _ = reldir.split('/')
 
     with tempfile.TemporaryDirectory() as tmpdir:
         h5file = Path(tmpdir) / 'out.h5'
 
         t,r,v,snr,dur,diams = read_spade(dirname=str(path), output_h5=h5file)
-        plot_data(h5file)
+        plot_data(h5file, site=site, date=date)
 
 
 
@@ -258,15 +270,15 @@ if __name__ == "__main__":
     plot_spade("esr/2021.11.23/leo_bpark_2.2_SW@32m")
     plot_spade("esr/2021.11.25/leo_bpark_2.2_SW@42m")
     plot_spade("esr/2021.11.29/leo_bpark_2.2_SW@42m")
-    plot_spade("uhf/2018.01.04/leo_bpark_2.1u_NO@uhf")
-    plot_spade("uhf/2018.01.04/leo_bpark_2.1u_NO@uhf")
-    plot_spade("uhf/2019.04.02/leo_bpark_2.1u_NO@uhf")
-    plot_spade("uhf/2019.04.05/leo_bpark_2.1u_NO@uhf")
-    plot_spade("uhf/2021.04.12/leo_bpark_2.1u_NO@uhf")
+    # plot_spade("uhf/2018.01.04/leo_bpark_2.1u_NO@uhf")
+    # plot_spade("uhf/2018.01.04/leo_bpark_2.1u_NO@uhf")
+    # plot_spade("uhf/2019.04.02/leo_bpark_2.1u_NO@uhf")
+    # plot_spade("uhf/2019.04.05/leo_bpark_2.1u_NO@uhf")
+    # plot_spade("uhf/2021.04.12/leo_bpark_2.1u_NO@uhf")
     plot_spade("uhf/2021.11.23/leo_bpark_2.1u_NO@uhf")
-    plot_spade("uhf/2021.11.23/leo_bpark_2.1u_NO@uhf")
+    # plot_spade("uhf/2021.11.23/leo_bpark_2.1u_NO@uhf")
     plot_spade("uhf/2021.11.25/leo_bpark_2.1u_SW@uhf")
-    plot_spade("uhf/2021.11.25/leo_bpark_2.1u_SW@uhf")
+    # plot_spade("uhf/2021.11.25/leo_bpark_2.1u_SW@uhf")
     plot_spade("uhf/2021.11.29/leo_bpark_2.1u_SW@uhf")
-    plot_spade("uhf/2021.11.29/leo_bpark_2.1u_SW@uhf")
+    # plot_spade("uhf/2021.11.29/leo_bpark_2.1u_SW@uhf")
 
