@@ -393,6 +393,76 @@ def build_cache(station, radar_name='generic', cache_dir='cache', azim=None, ele
             print("")
 
 
+def plot_from_cachefile(cachefilename, incl=None):
+
+    good_limit = 1.0            # how much off-axis pointing is okay (degrees)
+    cmap = plt.get_cmap('tab10')
+
+    if incl is None:
+        incl = np.arange(70, 110.1, 5)
+
+    with h5py.File(cachefilename, 'r') as ds:
+
+        dsincl = ds['incl'][:]
+        sma = ds['sema'][:]
+        height = sma - 6371e3       # height over average Earth radius
+
+        lh = []
+        lab = []
+        for ii, inci in enumerate(incl):
+            ix = np.where(dsincl == inci)[0][0]
+
+            theta_a = ds['theta_a'][ix,:]
+            r_a = ds['r_a'][ix,:]
+            rdot_a = ds['rdot_a'][ix,:]
+
+            theta_d = ds['theta_d'][ix,:]
+            r_d = ds['r_d'][ix,:]
+            rdot_d = ds['rdot_d'][ix,:]
+
+            ok_a = np.where(theta_a <= 1.0)
+            nok_a = np.where(theta_a >= 1.0)
+            ok_d = np.where(theta_d <= 1.0)
+            nok_d = np.where(theta_d >= 1.0)
+
+            hh = plt.plot(r_a[ok_a], rdot_a[ok_a], '-',
+                          r_d[ok_d], rdot_d[ok_d], '--',
+                          r_a[nok_a], rdot_a[nok_a], ':',
+                          r_d[nok_d], rdot_d[nok_d], ':', color=cmap(ii))
+            lh.append(hh[0])
+            lab.append(f'incl = {inci}')
+
+        lat = ds['site_lat'][()]
+        slat = f'{lat:.1f}N' if lat >= 0 else f'{-lat:.1f}S'
+        lon = ds['site_lon'][()]
+        slon = f'{lon:.1f}E' if lon >= 0 else f'{-lon:.1f}W'
+        az = ds['azimuth'][()]
+        el = ds['elevation'][()]
+
+        # Use the 'units' attribute of the dataset to label plots
+        plt.title(f'range rate vs range at {slat} {slon} az {az:.1f} el {el:.1f}')
+        plt.xlabel(f"range [{ds['r_a'].attrs['units']}]")
+        plt.ylabel(f"range rate [{ds['rdot_a'].attrs['units']}]")
+        plt.legend(lh, lab)
+
+
+
+def do_create_demoplots():
+
+    # ESR field-aligned demo plot
+    cachefilename = 'cache/eiscat_esr/az185.5_el82.1.h5'
+    fig = plt.figure()
+    plot_from_cachefile(cachefilename, incl=[77, 78, 80, 85, 90, 95, 100, 102, 104])
+    plt.savefig('new_cache_figure_esr_field_aligned.png')
+
+    cachefilename = 'cache/eiscat_uhf/az90.0_el75.0.h5'
+    fig = plt.figure()
+    plot_from_cachefile(cachefilename, incl=[69, 70, 75, 80, 85, 90, 95, 100, 105, 110])
+    plt.savefig('new_cache_figure_uhf_east.png')
+
+
+
+
 def main():
 
     parser = argparse.ArgumentParser(description='Calculate doppler-inclination correlation for a beampark')
