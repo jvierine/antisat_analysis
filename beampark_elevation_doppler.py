@@ -161,14 +161,17 @@ def cache_path(station, radar_name='generic', topdir='cache', azim=None, elev=No
 
     example:  cache/eiscat_esr/az181.6_el81.6.h5
     """
-    az = station.beam.azimuth
-    el = station.beam.elevation
+
+    if azim is None:
+        azim = station.beam.azimuth
+    if elev is None:
+        elev = station.beam.elevation
 
     if not degrees:
-        az = np.degrees(az)
-        el = np.degrees(el)
+        azim = np.degrees(azim)
+        elev = np.degrees(elev)
 
-    fname = f'az{az:.1f}_el{el:.1f}.h5'
+    fname = f'az{azim:.1f}_el{elev:.1f}.h5'
     return Path(topdir) / radar_name / fname
 
 
@@ -244,7 +247,7 @@ def build_cache(station, radar_name='generic', cache_dir='cache', azim=None, ele
     _2pi = 2 * np.pi
 
     cpath = cache_path(station, radar_name=radar_name,
-                    topdir=cache_dir, azim=azim, elev=azim, degrees=degrees)
+                    topdir=cache_dir, azim=azim, elev=elev, degrees=degrees)
 
     if cpath.exists() and not clobber:
         raise FileExistsError('Cache file {cpath.name} exists in cache')
@@ -460,10 +463,17 @@ def do_create_demoplots():
     plot_from_cachefile(cachefilename, incl=[69, 70, 75, 80, 85, 90, 95, 100, 105, 110])
     plt.savefig('new_cache_figure_uhf_east.png')
 
+    cachefilename = 'cache/eiscat_esr/az90.0_el75.0.h5'
+    fig = plt.figure()
+    plot_from_cachefile(cachefilename, incl=[78.5, 80, 85, 90, 95, 101])
+    plt.savefig('new_cache_figure_esr_east.png')
 
 
 
-def main():
+
+def old_main():
+
+    raise RuntimeError('Code left for illustration only, use build_cache() to create new hdf5 cache files')
 
     parser = argparse.ArgumentParser(description='Calculate doppler-inclination correlation for a beampark')
     parser.add_argument('radar', type=str, help='The observing radar system')
@@ -663,4 +673,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    do_create_demoplots()
