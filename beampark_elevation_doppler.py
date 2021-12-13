@@ -201,7 +201,7 @@ def build_cache(station, radar_name='generic', cache_dir='cache', azim=None, ele
       incl:
         long name: orbit plane inclination
         units: degrees
-        values: from 50 to 150 in increments of 0.5
+        values: from 50 to 130 in increments of 0.5
 
       sema:
         long name: semi-major axis
