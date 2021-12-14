@@ -452,21 +452,33 @@ def plot_from_cachefile(cachefilename, incl=None):
 
 def do_create_demoplots():
 
+    # UHF east-pointing demo plot
+    cachefilename = 'cache/eiscat_uhf/az90.0_el75.0.h5'
+    fig = plt.figure()
+    plot_from_cachefile(cachefilename, incl=[69, 70, 75, 80, 85, 90, 95, 100, 105, 110])
+    plt.savefig('new_cache_figure_uhf_east.png')
+
+    cachefilename = 'cache/eiscat_uhf/az90.0_el45.0.h5'
+    fig = plt.figure()
+    plot_from_cachefile(cachefilename, incl=[69.5, 70, 75, 80, 85, 90, 95, 100, 105, 110])
+    plt.savefig('new_cache_figure_uhf_east_low.png')
+
     # ESR field-aligned demo plot
     cachefilename = 'cache/eiscat_esr/az185.5_el82.1.h5'
     fig = plt.figure()
     plot_from_cachefile(cachefilename, incl=[77, 78, 80, 85, 90, 95, 100, 102, 104])
     plt.savefig('new_cache_figure_esr_field_aligned.png')
 
-    cachefilename = 'cache/eiscat_uhf/az90.0_el75.0.h5'
-    fig = plt.figure()
-    plot_from_cachefile(cachefilename, incl=[69, 70, 75, 80, 85, 90, 95, 100, 105, 110])
-    plt.savefig('new_cache_figure_uhf_east.png')
-
     cachefilename = 'cache/eiscat_esr/az90.0_el75.0.h5'
     fig = plt.figure()
     plot_from_cachefile(cachefilename, incl=[78.5, 80, 85, 90, 95, 101])
     plt.savefig('new_cache_figure_esr_east.png')
+
+    cachefilename = 'cache/eiscat_esr/az0.0_el35.0.h5'
+    fig = plt.figure()
+    plot_from_cachefile(cachefilename, incl=[78.5, 80, 85, 90, 95, 101])
+    plt.savefig('new_cache_figure_esr_north.png')
+
 
 
 
