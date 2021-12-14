@@ -9,7 +9,6 @@ import argparse
 import pathlib
 import pickle
 
-import matplotlib.pyplot as plt
 import numpy as np
 import h5py
 from astropy.time import Time
@@ -74,7 +73,7 @@ def run():
     parser = argparse.ArgumentParser(description='Calculate TLE catalog correlation for a beampark')
     parser.add_argument('radar', type=str, help='The observing radar system')
     parser.add_argument('catalog', type=str, help='TLE catalog path')
-    parser.add_argument('input', type=str, help='Observation data folder')
+    parser.add_argument('input', type=str, help='Observation data folder/file')
     parser.add_argument('output', type=str, help='Results output location')
     parser.add_argument('-o', '--override', action='store_true', help='Override output location if it exists')
     parser.add_argument('--std', action='store_true', help='Use measurement errors')
@@ -104,7 +103,12 @@ def run():
     if output_pth.is_file() and not args.override:
         print('Using cached data, not reading measurements file')
     else:
-        for in_file in input_pth.glob('**/*.h5'):
+        if input_pth.is_file():
+            input_files = [input_pth]
+        else:
+            input_files = input_pth.glob('**/*.h5')
+        
+        for in_file in input_files:
 
             # Each entry in the input `measurements` list must be a dictionary that contains the following fields:
             #   * 't': [numpy.ndarray] Times relative epoch in seconds
@@ -138,8 +142,8 @@ def run():
                 #
                 # #######################
                 dat = {
-                    'r': r*2, # two way
-                    'v': v*2, # two way
+                    'r': r*2,  # two way
+                    'v': v*2,  # two way
                     't': t,
                     'epoch': epoch,
                     'tx': radar.tx[0],
@@ -183,7 +187,7 @@ def run():
 
         if comm is None or comm.rank == 0:
             with open(output_pth, 'wb') as fh:
-                 pickle.dump([indecies, metric, cdat], fh)
+                pickle.dump([indecies, metric, cdat], fh)
 
     if comm is None or comm.rank == 0:
         print('Individual measurement match metric:')
