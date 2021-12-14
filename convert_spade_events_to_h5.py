@@ -30,7 +30,7 @@ def read_spade(target_dir, output_h5):
     durs = []
     diams = []
     
-    names = [
+    names_v1_4 = [
         'YYYY', 'MM', 'DD', 
         'hh', 'mm', 'ss.s', 
         'TX', 'AZ', 'EL', 
@@ -40,13 +40,45 @@ def read_spade(target_dir, output_h5):
         'ED', 'TP', 'MT',
     ]
 
+    names_v1_6 = [
+        'YYYY', 'MM', 'DD', 
+        'hh', 'mm', 'ss.s', 
+        'ID', 'TX', 
+        'ST', 'AZ', 'EL', 
+        'HT', 'RT', 'RG', 
+        'RR', 'VD', 'AD', 
+        'DI', 'CS', 'TS', 
+        'EN', 'ED', 'TP', 
+        'MT', 
+    ]
+
     data = None
     for file in files:
-        next_data = pd.read_csv(file, sep=r'[ ]+', comment='%', skip_blank_lines=True, names=names)
+        with open(file, 'r') as fh:
+            first_line = fh.readline().strip().split()
+
+        if len(first_line) < 3:
+            next_data = None
+        elif first_line[2] == '1.4':
+            next_data = pd.read_csv(file, sep=r'[ ]+', comment='%', skip_blank_lines=True, names=names_v1_4)
+        elif first_line[2] == '1.6':
+            next_data = pd.read_csv(file, sep=r'[ ]+', comment='%', skip_blank_lines=True, names=names_v1_6)
+        else:
+            next_data = None
+
+        if next_data is None:
+            print(f'{file}: File not known SPADE-file...')
+            continue
+        else:
+            print(f'{file}: Detected SPADE-file version {first_line[2]}...')
+
         if data is None:
             data = next_data
         else:
-            data.append(next_data)
+            data = pd.concat([data, next_data])
+
+    if data is None:
+        raise ValueError('No valid files found!')
 
     for ind, row in data.iterrows():
 
