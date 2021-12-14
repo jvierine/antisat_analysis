@@ -1,7 +1,10 @@
+#!/usr/bin/env python
+
 import sys
 import configparser
 import logging
 import pathlib
+import argparse
 
 import numpy as np
 from astropy.time import Time, TimeDelta
@@ -93,8 +96,7 @@ class ForwardModel(sorts.Simulation):
         self.epoch = Time(config.get('General', 'epoch'), format='isot')
         self.inds = list(range(len(population)))
 
-        if kwargs.pop('DEBUG', False):
-            self.inds = self.inds[:5]
+        # self.inds = self.inds[:12]
 
         super().__init__(*args, **kwargs)
 
@@ -102,7 +104,7 @@ class ForwardModel(sorts.Simulation):
             self.logger.always(f'Population of size {len(population)} objects loaded.')
 
         self.cols = ['t', 'range', 'range_rate', 'snr']
-        self._dtype = [('oid', np.int)] + [(key, np.float64) for key in self.cols]
+        self._dtype = [('oid', np.int64)] + [(key, np.float64) for key in self.cols]
         self.collected_data = np.empty((0,), dtype=self._dtype)
 
         self.steps['simulate'] = self.simulate
@@ -192,9 +194,9 @@ def generate_population(config):
             'oid', 'a', 'e', 
             'i', 'raan', 'aop', 
             'mu0', 'mjd0', 'm', 
-            'd', 'C_R', 'C_D',
+            'd', 'A', 'C_R', 'C_D',
         ],
-        space_object_fields = ['oid', 'm', 'd', 'C_R', 'C_D'],
+        space_object_fields = ['oid', 'm', 'd', 'A', 'C_R', 'C_D'],
         state_fields = ['a', 'e', 'i', 'raan', 'aop', 'mu0'],
         epoch_field = {'field': 'mjd0', 'format': 'mjd', 'scale': 'utc'},
         propagator = propagator,
@@ -248,11 +250,13 @@ def generate_population(config):
     pop['mu0'] = np.reshape(nu, (size,))
     pop['mjd0'] = Time(config.get('General', 'epoch'), format='isot').mjd
     pop['d'] = 10.0**(np.random.randn(size)*d_std + d_mu)
+    pop['A'] = np.pi*(pop['d']*0.5)**2
     pop['m'] = 4.0/3.0*np.pi*(pop['d']*0.5)**3*rho
     pop['C_R'] = 0.1
     pop['C_D'] = 2.7
 
-    pop.save(cache_file)
+    if comm.rank == 0:
+        pop.save(cache_file)
 
     return pop
 
@@ -267,7 +271,9 @@ def get_config(path):
     )
 
     config.read_dict(DEFAULT_CONFIG)
-    config.read([path])
+
+    if path is not None:
+        config.read([path])
 
     return config
 
@@ -278,11 +284,26 @@ def main():
     logger.setLevel(logging.INFO)
     logger.addHandler(handler)
 
-    if len(sys.argv) < 2:
-        raise ValueError('Not enough input arguments, need a config file...')
-    cfg = pathlib.Path(sys.argv[1])
+    parser = argparse.ArgumentParser(description='Forward model to detmerine observation probabilitiy')
+    parser.add_argument('config', type=pathlib.Path, help='Path to config')
+    parser.add_argument('-c', '--clean', action='store_true', help='Remove simulation data before running')
 
-    config = get_config(cfg)
+    args = parser.parse_args()
+
+    if not args.config.is_file():
+        config = get_config(None)
+
+        logger.info(f'NO CONFIG DETECTED AT {args.config}')
+        logger.info(f'Writing default config to "{args.config}"...')
+
+        if comm.rank == 0:
+            with open(args.config, 'w') as fh:
+                config.write(fh)
+
+        logger.info('Exiting')
+        return
+    else:
+        config = get_config(args.config)
 
     radar = getattr(sorts.radars, config.get('General', 'radar'))
     logger.info('Using radar: {}'.format(config.get('General', 'radar')))
@@ -294,20 +315,35 @@ def main():
     logger.info(f'Using epoch: {epoch}')
 
     cache_loc = pathlib.Path(config.get('Cache', 'output_folder'))
-    cache_loc.mkdir(exist_ok=True)
+    if comm.rank == 0:
+        cache_loc.mkdir(exist_ok=True)
 
     logger.info(f'Using cache: {cache_loc}')
 
     root = cache_loc / 'simulation'
-    root.mkdir(exist_ok=True)
+    if comm.rank == 0:
+        root.mkdir(exist_ok=True)
+
+    if args.clean and comm.rank == 0:
+        pop_file = cache_loc / 'population.h5'
+        if pop_file.is_file():
+            logger.info(f'Cleaning population cache {pop_file}...')
+            pop_file.unlink()
+
+    if comm.size > 1:
+        comm.barrier()
 
     scheduler = get_scheduler(radar, config)
 
     population = generate_population(config)
 
-    sim = ForwardModel(population, config, scheduler, root, DEBUG=True)
+    sim = ForwardModel(population, config, scheduler, root)
 
     sim.profiler.start('total')
+
+    if args.clean:
+        logger.info(f'Cleaning branch {sim.branch_name}...')
+        sim.delete(sim.branch_name)
 
     sim.run()
 
