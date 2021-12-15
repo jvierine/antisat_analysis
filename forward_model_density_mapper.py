@@ -284,6 +284,9 @@ def main():
     logger.setLevel(logging.INFO)
     logger.addHandler(handler)
 
+    #add option to fix longtude of asc and/or eccentricity
+    #add constant size and allow for saving of SNR arcs instead
+
     parser = argparse.ArgumentParser(description='Forward model to detmerine observation probabilitiy')
     parser.add_argument('config', type=pathlib.Path, help='Path to config')
     parser.add_argument('-c', '--clean', action='store_true', help='Remove simulation data before running')

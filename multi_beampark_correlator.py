@@ -54,11 +54,16 @@ if __name__ == '__main__':
         }
 
         for oid in np.unique(match_data[ind]['match']):
+            _data = [(ind, np.where(match_data[ind]['match'] == oid))]
             if oid not in objects:
-                objects[oid] = [ind]
+                objects[oid] = _data
             else:
-                objects[oid] += [ind]
+                objects[oid] += _data
 
+    for oid in objects:
+        print(f'')
+
+    # check orbit improvement
 
 
 
