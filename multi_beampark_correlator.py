@@ -18,6 +18,9 @@ Example execution
 python multi_beampark_correlator.py ~/data/spade/beamparks/uhf/2021.11.23/space-track.tles ~/data/spade/beamparks/{uhf,esr}/2021.11.23/correlation.pickle
 '''
 
+def metric_merge(metric):
+    return np.sqrt(metric['dr']**2 + 40*metric['dv']**2)
+
 def get_matches(data, bp, index):
     return data[bp['beampark'][index]]['metric'][bp['measurement_id'][index]]
 
@@ -42,8 +45,10 @@ if __name__ == '__main__':
 
     for ind, input_pth in enumerate(input_pths):
         print(f'Loading: {input_pth}')
-        with open(input_pth, 'rb') as fh:
-            indecies, metric, _ = pickle.load(fh)
+        with h5py.File(input_pth, 'r') as ds:
+            indecies = ds['match_oid'][()]
+            metric = ds['match_metric'][()]
+            name = ds.attrs['radar_name']
 
         # Pick only best matches in row 0
         match_data[ind] = {
@@ -71,12 +76,22 @@ if __name__ == '__main__':
         if bp['num'] < 2:
             continue
 
+        merged_data = np.empty((bp['num'],), dtype=np.float64)
+
         for index in range(bp['num']):
             match = get_matches(match_data, bp, index)
+            _m = metric_merge(match)
+            _m = _m[np.logical_not(np.isnan(_m))]
+            if _m.size > 0:
+                _m = np.min(_m)
+            else:
+                _m = np.nan
+
+            merged_data[index] = _m
             ID = bp['beampark'][index]
             print(f'OID - {oid}: Beampark-{ID} -> match={match}')
 
-
+        print(f'OID - {oid}: {merged_data}')
 
     # print('Loading TLE population')
     # pop = sorts.population.tle_catalog(tle_pth, cartesian=False)
