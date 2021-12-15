@@ -18,6 +18,9 @@ Example execution
 python multi_beampark_correlator.py ~/data/spade/beamparks/uhf/2021.11.23/space-track.tles ~/data/spade/beamparks/{uhf,esr}/2021.11.23/correlation.pickle
 '''
 
+def get_matches(data, bp, index):
+    return data[bp['beampark'][index]]['metric'][bp['measurement_id'][index]]
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Analyse beampark correlation for a beampark')
     parser.add_argument('catalog', type=str, help='Catalog to which data was correlated')
@@ -31,13 +34,8 @@ if __name__ == '__main__':
     tle_pth = pathlib.Path(args.catalog).resolve()
     input_pths = [pathlib.Path(x).resolve() for x in args.inputs]
 
-    # if len(input_pths) < 2:
-    #     raise ValueError('Need at least 2 correlation files')
-
-    # print('Loading TLE population')
-    # pop = sorts.population.tle_catalog(tle_pth, cartesian=False)
-    # pop.out_frame = 'ITRS'
-    # print(f'Population size: {len(pop)}')
+    if len(input_pths) < 2:
+        raise ValueError('Need at least 2 correlation files')
 
     match_data = {}
     objects = {}
@@ -54,22 +52,35 @@ if __name__ == '__main__':
         }
 
         for oid in np.unique(match_data[ind]['match']):
-            _data = [(ind, np.where(match_data[ind]['match'] == oid))]
-            if oid not in objects:
-                objects[oid] = _data
-            else:
-                objects[oid] += _data
+            indecies = np.where(match_data[ind]['match'] == oid)
 
-    for oid in objects:
-        print(f'')
+            if oid not in objects:
+                objects[oid] = {
+                    'beampark': [ind], 
+                    'measurement_id': [indecies],
+                    'num': 1,
+                }
+            else:
+                objects[oid]['beampark'].append(ind)
+                objects[oid]['measurement_id'].append(indecies)
+                objects[oid]['num'] += 1
+                
+
+    for oid, bp in objects.items():
+        #skip all objects only seen in one beampark
+        if bp['num'] < 2:
+            continue
+
+        for index in range(bp['num']):
+            match = get_matches(match_data, bp, index)
+            ID = bp['beampark'][index]
+            print(f'OID - {oid}: Beampark-{ID} -> match={match}')
+
+
+
+    # print('Loading TLE population')
+    # pop = sorts.population.tle_catalog(tle_pth, cartesian=False)
+    # pop.out_frame = 'ITRS'
+    # print(f'Population size: {len(pop)}')
 
     # check orbit improvement
-
-
-
-    # print('Individual measurement match metric:')
-    # for mind, (ind, dst) in enumerate(zip(indecies.T, metric.T)):
-    #     print(f'measurement = {mind}')
-    #     for res in range(len(ind)):
-    #         obj = pop.get_object(ind[res])
-
