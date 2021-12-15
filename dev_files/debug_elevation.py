@@ -80,34 +80,6 @@ gcrs_beam = sorts.frames.convert(
 
 gcrs_states = orbit.cartesian
 
-ecef_states = sorts.frames.convert(
-    epoch, 
-    gcrs_states, 
-    in_frame='GCRS', 
-    out_frame='ITRS',
-)
-
-fig = plt.figure(figsize=(15, 15))
-ax = fig.add_subplot(111, projection='3d')
-ax.plot(ecef_states[0, :res], ecef_states[1, :res], ecef_states[2, :res], "-b")
-ax.plot(ecef_states[0, res], ecef_states[1, res], ecef_states[2, res], "or")
-ax.plot(
-    [ecef_st[0], ecef_beam[0]], 
-    [ecef_st[1], ecef_beam[1]], 
-    [ecef_st[2], ecef_beam[2]], 
-    "-g",
-)
-
-sorts.plotting.grid_earth(ax)
-
-max_range = np.linalg.norm(ecef_states[0:3, 0])*2.1
-
-ax.set_xlim(-max_range, max_range)
-ax.set_ylim(-max_range, max_range)
-ax.set_zlim(-max_range, max_range)
-
-
-
 fig = plt.figure(figsize=(15, 15))
 ax = fig.add_subplot(111, projection='3d')
 ax.plot(gcrs_states[0, :res], gcrs_states[1, :res], gcrs_states[2, :res], "-b")
@@ -123,8 +95,8 @@ sorts.plotting.grid_earth(ax)
 
 max_range = np.linalg.norm(gcrs_states[0:3, 0])*2.1
 
-ax.set_xlim(-max_range, max_range)
-ax.set_ylim(-max_range, max_range)
-ax.set_zlim(-max_range, max_range)
+ax.set_xlim(gcrs_st[0] - max_range, gcrs_st[0] + max_range)
+ax.set_ylim(gcrs_st[1] - max_range, gcrs_st[1] + max_range)
+ax.set_zlim(gcrs_st[2] - max_range, gcrs_st[2] + max_range)
 
 plt.show()
