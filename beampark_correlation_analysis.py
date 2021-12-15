@@ -80,30 +80,37 @@ def draw_ellipse(x_size, y_size, ax, res=100, style='-r'):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Analyse beampark correlation for a beampark')
-    parser.add_argument('input', type=str, help='Input correlation data')
+    parser.add_argument('input', type=str, nargs='+', help='Input correlation data')
 
     args = parser.parse_args()
 
-    input_pth = pathlib.Path(args.input).resolve()
+    for arg_input in args.input:
 
-    with open(input_pth, 'rb') as fh:
-        indecies, metric, cdat = pickle.load(fh)
+        input_pth = pathlib.Path(arg_input).resolve()
 
-    x = metric['dr']*1e-3
-    y = metric['dv']*1e-3
-    inds = np.logical_not(np.logical_or(np.isnan(x), np.isnan(y)))
-    x = x[inds]
-    y = y[inds]
+        # with open(input_pth, 'rb') as fh:
+        #     indecies, metric, cdat = pickle.load(fh)
+        with h5py.File(input_pth, 'r') as ds:
+            indecies = ds['match_oid'][()]
+            metric = ds['match_metric'][()]
+            name = ds.attrs['radar_name']
 
-    fig, ax = plt.subplots(1, 1, figsize=(15, 15))
-    ax.plot(x, y, '.b')
-    ax.plot([0, 0], [y.min(), y.max()], '-r')
-    ax.plot([x.min(), x.max()], [0, 0], '-r')
+        x = metric['dr']*1e-3
+        y = metric['dv']*1e-3
+        inds = np.logical_not(np.logical_or(np.isnan(x), np.isnan(y)))
+        x = x[inds]
+        y = y[inds]
 
-    draw_ellipse(1.0, 0.02, ax)
+        fig, ax = plt.subplots(1, 1, figsize=(15, 15))
+        ax.plot(x, y, '.b')
+        ax.plot([0, 0], [y.min(), y.max()], '-r')
+        ax.plot([x.min(), x.max()], [0, 0], '-r')
 
-    ax.set_xlabel('Range residuals [km]')
-    ax.set_ylabel('Range-rate residuals [km/s]')
+        draw_ellipse(1.0, 0.02, ax)
+
+        ax.set_xlabel('Range residuals [km]')
+        ax.set_ylabel('Range-rate residuals [km/s]')
+        ax.set_title(name)
 
     # fig, axes = plt.subplots(2, 3, figsize=(15, 15))
     # plot_measurement_data(dat, cdat[0][0], axes=axes[:, 0],)
