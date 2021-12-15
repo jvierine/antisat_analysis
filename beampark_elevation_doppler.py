@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import sys
 import argparse
 from pathlib import Path
@@ -8,6 +10,7 @@ from mpl_toolkits.mplot3d import Axes3D
 from astropy.time import Time, TimeDelta
 import scipy.optimize as sio
 import h5py
+from tqdm import tqdm
 
 try:
     from mpi4py import MPI
@@ -21,6 +24,7 @@ except ImportError:
 import sorts
 import pyorb
 
+HERE = Path(__file__).parent
 
 def get_off_axis_angle(station, states, ecef_k_vector):
     """
@@ -175,7 +179,7 @@ def cache_path(station, radar_name='generic', topdir='cache', azim=None, elev=No
     return Path(topdir) / radar_name / fname
 
 
-def build_cache(station, radar_name='generic', cache_dir='cache', azim=None, elev=None,
+def build_cache(station, radar_name='generic', cache_dir=HERE / 'cache', azim=None, elev=None,
                 degrees=True, clobber=False):
     """
     Create a cache file of r_rdot computations for a given radar and pointing direction.
@@ -257,144 +261,211 @@ def build_cache(station, radar_name='generic', cache_dir='cache', azim=None, ele
     if elev is None:
         elev = station.beam.elevation
 
-    with h5py.File(cpath, 'w') as ds:
+    station.beam.sph_point(azim, elev, radians=False)
 
-        # Create global attributes for dataset
-        ds.attrs['radar_name'] = radar_name
+    # Epoch of observation
+    epoch = Time("2000-01-01T00:10:00Z", format='isot')
 
-        # Create scalar variables for dataset constants
-        def _create_scalar_var(name, long_name, units, value):
-            ds.create_dataset(name, shape=(), data=value)
-            var = ds[name]
-            var.attrs['long_name'] = long_name
-            var.attrs['units'] = units
+    # Values of dimension axis for orbit plane inclination
+    sema = 1000 * (6371 + np.linspace(300, 3000, 20))
 
-        _create_scalar_var('site_lat', 'Geodetic latitude of site', 'degrees', station.lat)
-        _create_scalar_var('site_lon', 'Geodetic longitude of site', 'degrees', station.lon)
-        _create_scalar_var('site_alt', 'Altitude above MSL of site', 'metres', station.alt)
-        _create_scalar_var('azimuth',  'Azimuth of pointing direction', 'degrees', azim)
-        _create_scalar_var('elevation','Elevation of pointing direction', 'degrees', elev)
+    # Values of dimension axis for orbit semimajor axis
+    incl = np.r_[69:111:0.5]
 
-        # Create dimension axis for orbit plane inclination
-        ds['incl'] = np.r_[50:130.1:0.5]
-        incl = ds['incl']
-        incl.make_scale('inclination')
-        incl.attrs['long_name'] = 'orbit plane inclination'
-        incl.attrs['units'] = 'degrees'
-        incl.attrs['valid_range'] = 0.0, 180.0
+    if comm.rank == 0:
+        print('Rank-0: Setting up cache file')
+        with h5py.File(cpath, 'w') as ds:
 
-        # Create dimension axis for orbit semimajor axis
-        ds['sema'] = 1000 * (6371 + np.linspace(300, 3000, 20))
-        sema = ds['sema']
-        sema.make_scale('semimajor_axis')
-        sema.attrs['long_name'] = 'orbit semimajor axis'
-        sema.attrs['units'] = 'metres'
-        sema.attrs['valid_range'] = 1e0, 1e12
+            # Create global attributes for dataset
+            ds.attrs['radar_name'] = radar_name
+            ds.attrs['epoch'] = epoch.isot
 
-        def _create_ia_var(name, long_name, units, valid_range):
-            ds[name] = np.zeros((len(incl), len(sema)))
-            var = ds[name]
-            var.dims[0].attach_scale(incl)
-            var.dims[1].attach_scale(sema)
-            var.attrs['long_name'] = long_name
-            var.attrs['units'] = units
-            var.attrs['valid_range'] = valid_range
+            # Create scalar variables for dataset constants
+            def _create_scalar_var(name, long_name, units, value):
+                ds.create_dataset(name, shape=(), data=value)
+                var = ds[name]
+                var.attrs['long_name'] = long_name
+                var.attrs['units'] = units
 
-        _create_ia_var('nu_a', 'mean anomaly for ascending transit', 'degrees', (0.0, 360.0))
-        _create_ia_var('nu_d', 'mean anomaly for descending transit', 'degrees', (0.0, 360.0))
-        _create_ia_var('Om_a', 'longitude of ascending node for ascending transit', 'degrees', (0.0, 360.0))
-        _create_ia_var('Om_d', 'longitude of ascending node for descending transit', 'degrees', (0.0, 360.0))
-        _create_ia_var('theta_a', 'minimum off-axis angle for ascending transit', 'degrees', (0.0, 360.0))
-        _create_ia_var('theta_d', 'minimum off-axis angle for descending transit', 'degrees', (0.0, 360.0))
-        _create_ia_var('r_a', 'range at minimum off-axis angle for ascending transit', 'metres', (1e0, 1e12))
-        _create_ia_var('r_d', 'range at minimum off-axis angle for descending transit', 'metres', (1e0, 1e12))
-        _create_ia_var('rdot_a', 'range rate at minimum off-axis angle for ascending transit', 'metres/second', (1e0, 1e12))
-        _create_ia_var('rdot_d', 'range rate at minimum off-axis angle for descending transit', 'metres/second', (1e0, 1e12))
+            _create_scalar_var('site_lat', 'Geodetic latitude of site', 'degrees', station.lat)
+            _create_scalar_var('site_lon', 'Geodetic longitude of site', 'degrees', station.lon)
+            _create_scalar_var('site_alt', 'Altitude above MSL of site', 'metres', station.alt)
+            _create_scalar_var('azimuth',  'Azimuth of pointing direction', 'degrees', azim)
+            _create_scalar_var('elevation','Elevation of pointing direction', 'degrees', elev)
 
-        # First some invariants
-        epoch = Time("2000-01-01T00:10:00Z", format='isot')
-        samples = 101, 103  # for mean anomaly and longitude of ascending node, respectively
-        # Now start looking for orbits that intersect the pointing of the beam
-        anom, Omega = np.meshgrid(
-            np.linspace(0, 360, num=samples[0]),
-            np.linspace(0, 360, num=samples[1]),
-            indexing='ij',
-        )
-        anom.shape = -1             # unravel
-        Omega.shape = -1
+            # Create dimension axis for orbit plane inclination
+            ds['incl'] = incl.copy()
+            ds_incl = ds['incl']
+            ds_incl.make_scale('inclination')
+            ds_incl.attrs['long_name'] = 'orbit plane inclination'
+            ds_incl.attrs['units'] = 'degrees'
+            ds_incl.attrs['valid_range'] = 0.0, 180.0
 
-        k_ecef = station.pointing_ecef
-        orbit = pyorb.Orbit(
-            M0 = pyorb.M_earth,
-            degrees = True,
-            a = sema[0],
-            e = 0,
-            i = 0,
-            omega = 0,
-            Omega = Omega,
-            anom = anom,
-            num = anom.size,
-            type = 'mean',
-        )
-        for ii, inci in enumerate(incl):
-            orbit.i = inci
+            # Create dimension axis for orbit semimajor axis
+            ds['sema'] = sema.copy()
+            ds_sema = ds['sema']
+            ds_sema.make_scale('semimajor_axis')
+            ds_sema.attrs['long_name'] = 'orbit semimajor axis'
+            ds_sema.attrs['units'] = 'metres'
+            ds_sema.attrs['valid_range'] = 1e0, 1e12
 
-            print(f"inclination: {inci}")
-            for kk, a in enumerate(sema):
-                orbit.a = a
+            def _create_ia_var(name, long_name, units, valid_range):
+                ds[name] = np.zeros((len(ds_incl), len(ds_sema)))
+                var = ds[name]
+                var.dims[0].attach_scale(ds_incl)
+                var.dims[1].attach_scale(ds_sema)
+                var.attrs['long_name'] = long_name
+                var.attrs['units'] = units
+                var.attrs['valid_range'] = valid_range
 
-                states = orbit.cartesian
-                ecef = sorts.frames.convert(epoch, states, in_frame='GCRS', out_frame='ITRS')
-                angle = np.degrees(get_off_axis_angle(station, ecef, k_ecef))
+            _create_ia_var('nu_a', 'mean anomaly for ascending transit', 'degrees', (0.0, 360.0))
+            _create_ia_var('nu_d', 'mean anomaly for descending transit', 'degrees', (0.0, 360.0))
+            _create_ia_var('Om_a', 'longitude of ascending node for ascending transit', 'degrees', (0.0, 360.0))
+            _create_ia_var('Om_d', 'longitude of ascending node for descending transit', 'degrees', (0.0, 360.0))
+            _create_ia_var('theta_a', 'minimum off-axis angle for ascending transit', 'degrees', (0.0, 360.0))
+            _create_ia_var('theta_d', 'minimum off-axis angle for descending transit', 'degrees', (0.0, 360.0))
+            _create_ia_var('r_a', 'range at minimum off-axis angle for ascending transit', 'metres', (1e0, 1e12))
+            _create_ia_var('r_d', 'range at minimum off-axis angle for descending transit', 'metres', (1e0, 1e12))
+            _create_ia_var('rdot_a', 'range rate at minimum off-axis angle for ascending transit', 'metres/second', (1e0, 1e12))
+            _create_ia_var('rdot_d', 'range rate at minimum off-axis angle for descending transit', 'metres/second', (1e0, 1e12))
 
-                ranges, range_rates = get_range_and_range_rate(station, ecef)
-                inds = np.argsort(angle)
-                x_start = [anom[inds[0]], Omega[inds[0]]]
-                # Find first minimum
-                xhat1 = sio.minimize(
-                    lambda x: optim_off_axis_angle(x, epoch, station, k_ecef, a, inci),
-                    x_start,
-                    method='Nelder-Mead',
-                )
+    # First some invariants
+    samples = 101, 103  # for mean anomaly and longitude of ascending node, respectively
+    # Now start looking for orbits that intersect the pointing of the beam
+    anom, Omega = np.meshgrid(
+        np.linspace(0, 360, num=samples[0]),
+        np.linspace(0, 360, num=samples[1]),
+        indexing='ij',
+    )
+    anom.shape = -1             # unravel
+    Omega.shape = -1
 
-                # Clever trick here.
-                # Find the index of the smallest angle which satisfies the inequality
-                other_ind = np.argmax(np.abs(anom[inds] - anom[inds[0]]) > 5.0)
-                x_start2 = [anom[inds[other_ind]], Omega[inds[other_ind]]]
-                xhat2 = sio.minimize(
-                    lambda x: optim_off_axis_angle(x, epoch, station, k_ecef, a, inci),
-                    x_start2,
-                    method='Nelder-Mead',
-                )
+    k_ecef = station.pointing_ecef
+    orbit = pyorb.Orbit(
+        M0 = pyorb.M_earth,
+        degrees = True,
+        a = sema[0],
+        e = 0,
+        i = 0,
+        omega = 0,
+        Omega = Omega,
+        anom = anom,
+        num = anom.size,
+        type = 'mean',
+    )
 
-                # now we have two solutions, figure out if they are distinct,
-                # which one is ascending and descending, and their ranges and range rates,
-                # then put all of those (and the off-axis angles) into the file
+    pbars = []
+    iters = []
+    for rank in range(comm.size):
+        iters.append(list(range(comm.rank, len(incl), comm.size)))
+        pbars.append(tqdm(total=len(iters[-1])*len(sema), position=rank))
+    pbar = pbars[comm.rank]
 
-                # ascending node is the one with smallest mean anomaly, put that in xhat1
+    var_names = [
+        'nu_a', 'nu_d', 'Om_a', 
+        'Om_d', 'theta_a', 'theta_d', 
+        'r_a', 'r_d', 'rdot_a', 
+        'rdot_d', 
+    ]
+    RAM_ds = {key: np.empty((len(incl), len(sema)), dtype=incl.dtype) for key in var_names}
 
-                if xhat1.x[0] > xhat2.x[0]:
-                    xhat1, xhat2 = xhat2, xhat1
+    for ii in iters[comm.rank]:
+        inci = incl[ii]
+        orbit.i = inci
 
-                r1, rdot1 = orb_to_range_and_range_rate(xhat1.x, epoch, station, a, inci)
-                r2, rdot2 = orb_to_range_and_range_rate(xhat2.x, epoch, station, a, inci)
+        for kk, a in enumerate(sema):
+            orbit.a = a
 
-                # Store data
-                ds['nu_a'][ii,kk] = xhat1.x[0]
-                ds['nu_d'][ii,kk] = xhat2.x[0]
-                ds['Om_a'][ii,kk] = xhat1.x[1]
-                ds['Om_d'][ii,kk] = xhat2.x[1]
-                ds['theta_a'][ii,kk] = xhat1.fun
-                ds['theta_d'][ii,kk] = xhat2.fun
-                ds['r_a'][ii,kk] = r1[0]
-                ds['r_d'][ii,kk] = r2[0]
-                ds['rdot_a'][ii,kk] = rdot1[0]
-                ds['rdot_d'][ii,kk] = rdot2[0]
+            states = orbit.cartesian
+            ecef = sorts.frames.convert(epoch, states, in_frame='GCRS', out_frame='ITRS')
+            angle = np.degrees(get_off_axis_angle(station, ecef, k_ecef))
 
-                print(".", end="")
-                sys.stdout.flush()
-            print("")
+            ranges, range_rates = get_range_and_range_rate(station, ecef)
+            inds = np.argsort(angle)
+            x_start = [anom[inds[0]], Omega[inds[0]]]
+            # Find first minimum
+            xhat1 = sio.minimize(
+                lambda x: optim_off_axis_angle(x, epoch, station, k_ecef, a, inci),
+                x_start,
+                method='Nelder-Mead',
+                # options={'adaptive': True, 'fatol': 0.01},
+                # method='BFGS',
+                # method='CG',
+                # options={'gtol': 1e-3},
+            )
 
+            # Clever trick here.
+            # Find the index of the smallest angle which satisfies the inequality
+            other_ind = np.argmax(np.abs(anom[inds] - anom[inds[0]]) > 5.0)
+            x_start2 = [anom[inds[other_ind]], Omega[inds[other_ind]]]
+            xhat2 = sio.minimize(
+                lambda x: optim_off_axis_angle(x, epoch, station, k_ecef, a, inci),
+                x_start2,
+                method='Nelder-Mead',
+                # options={'adaptive': True, 'fatol': 0.01},
+                # method='BFGS',
+                # method='CG',
+                # options={'gtol': 1e-3},
+            )
+
+            # now we have two solutions, figure out if they are distinct,
+            # which one is ascending and descending, and their ranges and range rates,
+            # then put all of those (and the off-axis angles) into the file
+
+            # ascending node is the one with smallest mean anomaly, put that in xhat1
+
+            if xhat1.x[0] > xhat2.x[0]:
+                xhat1, xhat2 = xhat2, xhat1
+
+            r1, rdot1 = orb_to_range_and_range_rate(xhat1.x, epoch, station, a, inci)
+            r2, rdot2 = orb_to_range_and_range_rate(xhat2.x, epoch, station, a, inci)
+
+            # Store data
+            RAM_ds['nu_a'][ii,kk] = xhat1.x[0]
+            RAM_ds['nu_d'][ii,kk] = xhat2.x[0]
+            RAM_ds['Om_a'][ii,kk] = xhat1.x[1]
+            RAM_ds['Om_d'][ii,kk] = xhat2.x[1]
+            RAM_ds['theta_a'][ii,kk] = xhat1.fun
+            RAM_ds['theta_d'][ii,kk] = xhat2.fun
+            RAM_ds['r_a'][ii,kk] = r1[0]
+            RAM_ds['r_d'][ii,kk] = r2[0]
+            RAM_ds['rdot_a'][ii,kk] = rdot1[0]
+            RAM_ds['rdot_d'][ii,kk] = rdot2[0]
+
+            # Iter done
+            pbar.update(1)
+
+    for pb in pbars:
+        pb.close()
+
+    def tagger(data_id, key_id):
+        return data_id*100 + key_id
+
+    if comm.size > 1:
+        if comm.rank == 0:
+            print('Rank-0: Receiving all results')
+
+            for T in range(1, comm.size):
+                for ID in range(T, len(incl), comm.size):
+                    for ki, key in enumerate(var_names):
+                        RAM_ds[key][ID,:] = comm.recv(source=T, tag=tagger(ID, ki))
+            
+                    print(f'received packet {ID} from PID{T}')
+        else:
+            print(f'Rank-{comm.rank}: Sending results')
+
+            for ID in range(comm.rank, len(incl), comm.size):
+                for ki, key in enumerate(var_names):
+                    comm.send(RAM_ds[key][ID,:], dest=0, tag=tagger(ID, ki))
+        
+        print(f'Rank-{comm.rank}: Data distributing done')
+
+    if comm.rank == 0:
+        with h5py.File(cpath, 'a') as ds:
+            print(f'Rank-{comm.rank}: Saving to cache file')
+            for key in var_names:
+                ds[key][:, :] = RAM_ds[key]
+        print(f'Rank-{comm.rank}: Cache file done')
 
 def plot_from_cachefile(cachefilename, incl=None):
 
@@ -449,7 +520,6 @@ def plot_from_cachefile(cachefilename, incl=None):
         plt.legend(lh, lab)
 
 
-
 def do_create_demoplots():
 
     # UHF east-pointing demo plot
@@ -480,209 +550,44 @@ def do_create_demoplots():
     plt.savefig('new_cache_figure_esr_north.png')
 
 
-
-
-
-def old_main():
-
-    raise RuntimeError('Code left for illustration only, use build_cache() to create new hdf5 cache files')
+def main():
 
     parser = argparse.ArgumentParser(description='Calculate doppler-inclination correlation for a beampark')
-    parser.add_argument('radar', type=str, help='The observing radar system')
-    parser.add_argument('cache', type=str, help='Cache location')
-    parser.add_argument('azimuth', type=float, help='Azimuth of beampark')
-    parser.add_argument('elevation', type=float, help='Elevation of beampark')
-    parser.add_argument('inclinations', type=float, help='inclinations', nargs='+')
+
+    subparsers = parser.add_subparsers(dest='command')
+    parser_run = subparsers.add_parser('run', help='Run calculation and build cache')
+
+    parser_run.add_argument('radar', type=str, help='The observing radar system')
+    parser_run.add_argument('azimuth', type=float, help='Azimuth of beampark')
+    parser_run.add_argument('elevation', type=float, help='Elevation of beampark')
+    parser_run.add_argument('-c', '--clobber', action='store_true', help='Remove cache data before running')
+
+    parser_plot = subparsers.add_parser('plot', help='Plot results from cache')
+    parser_plot.add_argument('cache', type=str, help='Path to cache file to plot')
+
+    parser_demo = subparsers.add_parser('demo', help='Do predefined demo plotting')
 
     args = parser.parse_args()
 
-    radar = getattr(sorts.radars, args.radar)
+    if args.command == 'run':
 
-    epoch = Time("2000-01-01T00:10:00Z", format='isot')
+        radar = getattr(sorts.radars, args.radar)
+        st = radar.tx[0]
 
-    samples = (100, 100)
-    a_samples = 20
-    optim = True
-    R_earth = 6371e3
+        epoch = Time("2000-01-01T00:10:00Z", format='isot')
 
-    semi_major_axis = R_earth + np.linspace(300e3, 3000e3, num=a_samples)
+        build_cache(st, radar_name=args.radar, azim=args.azimuth, elev=args.elevation,
+                        degrees=True, clobber=args.clobber)
+    elif args.command == 'plot':
 
-    st = radar.tx[0]
-    st.beam.sph_point(args.azimuth, args.elevation, radians=False)
-    
-    hf = h5py.File(args.cache, 'a')
+        fig = plt.figure()
+        plot_from_cachefile(args.cache)
+        fig_name = Path(args.cache).stem
+        plt.savefig(f'new_cache_figure_{fig_name}.png')
 
-    for inclination in args.inclinations:
-        all_hits = [[], []]
-        all_obs = [[], []]
-        inclination = np.round(inclination, decimals=3)
-        dataset_key = f'{inclination}'
-        
-        if dataset_key + f'_node{0}_obs' in hf:
-            continue
-
-        k_ecef = st.pointing_ecef
-
-        anom, Omega = np.meshgrid(
-            np.linspace(0, 360, num=samples[0]),
-            np.linspace(0, 360, num=samples[1]),
-            indexing='ij',
-        )
-        anom = anom.reshape(anom.size)
-        Omega = Omega.reshape(Omega.size)
-
-        for a in semi_major_axis:
-
-            orbit = pyorb.Orbit(
-                M0 = pyorb.M_earth, 
-                degrees = True,
-                a = a, 
-                e = 0, 
-                i = 0, 
-                omega = 0,
-                Omega = Omega,
-                anom = anom,
-                num = anom.size,
-                type = 'mean',
-            )
-
-            print(orbit)
-
-            orbit.i = inclination
-            states = orbit.cartesian
-            ecef = sorts.frames.convert(epoch, states, in_frame='GCRS', out_frame='ITRS')
-            angle = np.degrees(get_off_axis_angle(st, ecef, k_ecef))
-
-            ranges, range_rates = get_range_and_range_rate(st, ecef)
-
-            inds = np.argsort(angle)
-
-            x_start = [anom[inds[0]], Omega[inds[0]]]
-            orb_hits = []
-            xhats = [] 
-            if optim:
-                xhat1 = sio.minimize(
-                    lambda x: optim_off_axis_angle(x, epoch, st, k_ecef, a, inclination),
-                    x_start,
-                    method='Nelder-Mead',
-                )
-                print(x_start)
-                print(xhat1)
-                xhats += [xhat1]
-                all_hits[0] += [xhat1.x]
-                all_obs[0] += [list(orb_to_range_and_range_rate(xhat1.x, epoch, st, a, inclination))]
-                orb_hits += [xhat1.x]
-            else:
-                all_hits[0] += [x_start]
-                all_obs[0] += [list(orb_to_range_and_range_rate(x_start, epoch, st, a, inclination))]
-                orb_hits += [x_start]
-
-            other_ind = np.argmax(np.abs(anom[inds] - anom[inds[0]]) > 5.0)
-            
-            if other_ind.size > 0:
-                x_start2 = [anom[inds[other_ind]], Omega[inds[other_ind]]]
-                if optim:
-                    xhat2 = sio.minimize(
-                        lambda x: optim_off_axis_angle(x, epoch, st, k_ecef, a, inclination),
-                        x_start2,
-                        method='Nelder-Mead',
-                    )
-                    print(x_start2)
-                    print(xhat2)
-                    xhats += [xhat2]
-                    xhats = [xhat1, xhat2]
-                    all_hits[1] += [xhat2.x]
-                    all_obs[1] += [list(orb_to_range_and_range_rate(xhat2.x, epoch, st, a, inclination))]
-                    orb_hits += [xhat2.x]
-                else:
-                    all_hits[1] += [x_start2]
-                    all_obs[1] += [list(orb_to_range_and_range_rate(x_start2, epoch, st, a, inclination))]
-                    orb_hits += [x_start2]
-
-                if all_obs[1][-1][1] > all_obs[0][-1][1]:
-                    _x = all_obs[1][-1]
-                    all_obs[1][-1] = all_obs[0][-1]
-                    all_obs[0][-1] = _x
-
-                    _x = all_hits[1][-1] 
-                    all_hits[1][-1] = all_hits[0][-1]
-                    all_hits[0][-1] = _x
-
-        for node in range(2):
-            all_obs[node] = np.squeeze(np.array(all_obs[node])).T
-            all_hits[node] = np.squeeze(np.array(all_hits[node])).T
-            hf.create_dataset(dataset_key + f'_node{node}_obs', data=all_obs[node])
-            hf.create_dataset(dataset_key + f'_node{node}_hit', data=all_hits[node])
-
-            # figs, axes = plot_inclination_results(
-            #     anom, 
-            #     Omega, 
-            #     angle, 
-            #     ranges, 
-            #     range_rates, 
-            #     samples, 
-            #     orb_hits=orb_hits,
-            # )
-            # plt.show()
-
-    fig = plt.figure()
-    axes = [
-        fig.add_subplot(3, 1, 1),
-        [
-            fig.add_subplot(3, 2, 3),
-            fig.add_subplot(3, 2, 4),
-        ],
-        [
-            fig.add_subplot(3, 2, 5),
-            fig.add_subplot(3, 2, 6),
-        ],
-    ]
-    nodes = {
-        0: 'Asc',
-        1: 'Dec',
-    }
-    for inci, inclination in enumerate(args.inclinations):
-        all_hits = [[], []]
-        all_obs = [[], []]
-        inclination = np.round(inclination, decimals=3)
-        dataset_key = f'{inclination}'
-
-        for node, col in zip(range(2), ['b', 'r']):
-            all_obs[node] = hf[dataset_key + f'_node{node}_obs'][()]
-            all_hits[node] = hf[dataset_key + f'_node{node}_hit'][()]
-
-            axes[0].plot(
-                all_obs[node][0, :], 
-                all_obs[node][1, :], 
-                '-' + col, 
-                label=f'{nodes[node]}. @ {inclination:.2f} deg incl.',
-            )
-            axes[1][node].plot(
-                all_obs[node][0, :], 
-                all_hits[node][0, :], 
-                '-' + col, 
-                label=f'{nodes[node]}. @ {inclination:.2f} deg incl.',
-            )
-            axes[2][node].plot(
-                all_obs[node][0, :], 
-                all_hits[node][1, :], 
-                '-' + col, 
-                label=f'{nodes[node]}. @ {inclination:.2f} deg incl.',
-            )
-    axes[0].legend()
-    for node in range(2):
-        axes[1][node].legend()
-        axes[2][node].legend()
-    axes[0].set_xlabel('Range [m]')
-    axes[0].set_ylabel('Doppler [m/s]')
-    axes[1][0].set_ylabel('Mean anomaly [deg]')
-    axes[2][0].set_ylabel('Longitude of the ascending node [deg]')
-    axes[2][0].set_xlabel('Range [m]')
-    axes[2][1].set_xlabel('Range [m]')
-    plt.show()
-
-    hf.close()
+    elif args.command == 'demo':
+        do_create_demoplots()
 
 
 if __name__ == '__main__':
-    do_create_demoplots()
+    main()
