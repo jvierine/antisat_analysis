@@ -40,6 +40,7 @@ if __name__ == '__main__':
     # print(f'Population size: {len(pop)}')
 
     match_data = {}
+    objects = {}
 
     for ind, input_pth in enumerate(input_pths):
         print(f'Loading: {input_pth}')
@@ -51,6 +52,14 @@ if __name__ == '__main__':
             'match': indecies[0,:], 
             'metric': metric[0,:],
         }
+
+        for oid in np.unique(match_data[ind]['match']):
+            if oid not in objects:
+                objects[oid] = [ind]
+            else:
+                objects[oid] += [ind]
+
+
 
 
     # print('Individual measurement match metric:')
