@@ -60,6 +60,56 @@ def sorting_function(metric):
     return np.argsort(P, axis=0)
 
 
+def save_correlation_data(output_pth, indecies, metric, cdat, radar_name='generic_radar'):
+    ## This is the old method
+    # with open(output_pth, 'wb') as fh:
+    #     pickle.dump([indecies, metric, cdat], fh)
+    print(f'Saving correlation data to {output_pth}')
+    with h5py.File(output_pth, 'w') as ds:
+
+        match_index = np.arange(indecies.shape[0])
+        observation_index = np.arange(indecies.shape[1])
+
+        # Create global attributes for dataset
+        ds.attrs['radar_name'] = radar_name
+
+        ds['mch_ind'] = match_index
+        ds_mch_ind = ds['mch_ind']
+        ds_mch_ind.make_scale('match_index')
+        ds_mch_ind.attrs['long_name'] = 'nth matching index'
+
+        ds['obs_ind'] = observation_index
+        ds_obs_ind = ds['obs_ind']
+        ds_obs_ind.make_scale('observation_index')
+        ds_obs_ind.attrs['long_name'] = 'radar observation index'
+
+        def _create_ia_var(base, name, long_name, data, scales, units=None):
+            base[name] = data.copy()
+            var = base[name]
+            for ind in range(len(scales)):
+                var.dims[ind].attach_scale(scales[ind])
+            var.attrs['long_name'] = long_name
+            if units is not None:
+                var.attrs['units'] = units
+
+        scales = [ds_mch_ind, ds_obs_ind]
+        _create_ia_var(ds, 'match_oid', 'Matched object id in the used population', indecies, scales)
+        _create_ia_var(ds, 'match_metric', 'Matching metric values for the object', metric, scales)
+
+        #we only had one input measurnment dict so input data index is 0
+        inp_dat_index = 0
+
+        c_grp = ds.create_group("correlation_data")
+        for mind in match_index:
+            m_grp = c_grp.create_group(f'match_number_{mind}')
+            for oind in observation_index:
+                o_grp = m_grp.create_group(f'observation_number_{oind}')
+                _create_ia_var(o_grp, 'r', 'simulated range', cdat[mind][oind][inp_dat_index]['r_ref'], [ds_obs_ind], units='m')
+                _create_ia_var(o_grp, 'v', 'simulated range rate', cdat[mind][oind][inp_dat_index]['v_ref'], [ds_obs_ind], units='m/s')
+                _create_ia_var(o_grp, 'match', 'calculated metric', cdat[mind][oind][inp_dat_index]['match'], [ds_obs_ind])
+
+
+
 def run():
 
     if comm is not None:
@@ -186,8 +236,7 @@ def run():
         )
 
         if comm is None or comm.rank == 0:
-            with open(output_pth, 'wb') as fh:
-                pickle.dump([indecies, metric, cdat], fh)
+            save_correlation_data(output_pth, indecies, metric, cdat, radar_name=args.radar)
 
     if comm is None or comm.rank == 0:
         print('Individual measurement match metric:')
