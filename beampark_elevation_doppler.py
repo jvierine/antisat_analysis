@@ -266,11 +266,11 @@ def build_cache(station, radar_name='generic', cache_dir=HERE / 'cache', azim=No
     # Epoch of observation
     epoch = Time("2000-01-01T00:10:00Z", format='isot')
 
-    # Values of dimension axis for orbit plane inclination
+    # Values of dimension axis for orbit semimajor axis
     sema = 1000 * (6371 + np.linspace(300, 3000, 20))
 
-    # Values of dimension axis for orbit semimajor axis
-    incl = np.r_[69:111:0.5]
+    # Values of dimension axis for orbit plane inclination
+    incl = np.r_[69:111.1:0.5]
 
     if comm.rank == 0:
         print('Rank-0: Setting up cache file')
