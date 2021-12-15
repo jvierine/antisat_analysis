@@ -382,8 +382,8 @@ def build_cache(station, radar_name='generic', cache_dir='cache', azim=None, ele
                 # Store data
                 ds['nu_a'][ii,kk] = xhat1.x[0]
                 ds['nu_d'][ii,kk] = xhat2.x[0]
-                ds['Om_a'][ii,kk] = xhat1.x[0]
-                ds['Om_d'][ii,kk] = xhat2.x[0]
+                ds['Om_a'][ii,kk] = xhat1.x[1]
+                ds['Om_d'][ii,kk] = xhat2.x[1]
                 ds['theta_a'][ii,kk] = xhat1.fun
                 ds['theta_d'][ii,kk] = xhat2.fun
                 ds['r_a'][ii,kk] = r1[0]
