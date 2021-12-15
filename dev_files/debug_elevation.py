@@ -12,6 +12,7 @@ import pyorb
 HERE = pathlib.Path(__file__).parent
 
 cachefilename = HERE / '..' / 'cache' / 'eiscat_uhf' / 'az90.0_el45.0.h5'
+# cachefilename = HERE / '..' / 'cache' / 'eiscat_uhf' / 'az90.0_el75.0.h5'
 
 inc_ind = 80
 sema_ind = 0
@@ -31,6 +32,8 @@ with h5py.File(cachefilename, 'r') as ds:
 
 print(f'r    = {r_a*1e-3} km')
 print(f'rdot = {rdot_a*1e-3} km/s')
+print(f'Om   = {Om_a} deg')
+print(f'nu   = {nu_a} deg')
 
 res = 100
 
@@ -75,12 +78,40 @@ gcrs_beam = sorts.frames.convert(
     out_frame='GCRS',
 )[:3]
 
-states = orbit.cartesian
+gcrs_states = orbit.cartesian
+
+ecef_states = sorts.frames.convert(
+    epoch, 
+    gcrs_states, 
+    in_frame='GCRS', 
+    out_frame='ITRS',
+)
 
 fig = plt.figure(figsize=(15, 15))
 ax = fig.add_subplot(111, projection='3d')
-ax.plot(states[0, :res], states[1, :res], states[2, :res], "-b")
-ax.plot(states[0, res], states[1, res], states[2, res], "or")
+ax.plot(ecef_states[0, :res], ecef_states[1, :res], ecef_states[2, :res], "-b")
+ax.plot(ecef_states[0, res], ecef_states[1, res], ecef_states[2, res], "or")
+ax.plot(
+    [ecef_st[0], ecef_beam[0]], 
+    [ecef_st[1], ecef_beam[1]], 
+    [ecef_st[2], ecef_beam[2]], 
+    "-g",
+)
+
+sorts.plotting.grid_earth(ax)
+
+max_range = np.linalg.norm(ecef_states[0:3, 0])*2.1
+
+ax.set_xlim(-max_range, max_range)
+ax.set_ylim(-max_range, max_range)
+ax.set_zlim(-max_range, max_range)
+
+
+
+fig = plt.figure(figsize=(15, 15))
+ax = fig.add_subplot(111, projection='3d')
+ax.plot(gcrs_states[0, :res], gcrs_states[1, :res], gcrs_states[2, :res], "-b")
+ax.plot(gcrs_states[0, res], gcrs_states[1, res], gcrs_states[2, res], "or")
 ax.plot(
     [gcrs_st[0], gcrs_beam[0]], 
     [gcrs_st[1], gcrs_beam[1]], 
@@ -90,7 +121,7 @@ ax.plot(
 
 sorts.plotting.grid_earth(ax)
 
-max_range = np.linalg.norm(states[0:3, 0])*2.1
+max_range = np.linalg.norm(gcrs_states[0:3, 0])*2.1
 
 ax.set_xlim(-max_range, max_range)
 ax.set_ylim(-max_range, max_range)
