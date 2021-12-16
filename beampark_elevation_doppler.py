@@ -357,7 +357,7 @@ def build_cache(station, radar_name='generic', cache_dir=HERE / 'cache', azim=No
     pbars = []
     iters = []
     for rank in range(comm.size):
-        iters.append(list(range(comm.rank, len(incl), comm.size)))
+        iters.append(list(range(rank, len(incl), comm.size)))
         pbars.append(tqdm(total=len(iters[-1])*len(sema), position=rank))
     pbar = pbars[comm.rank]
 
