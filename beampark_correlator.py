@@ -19,8 +19,8 @@ import sorts
 Examples:
 
 python beampark_correlator.py eiscat_uhf ~/data/spade/beamparks/uhf/2015.10.22/space-track.tles ~/data/spade/beamparks/uhf/2015.10.22/h5 ~/data/spade/beamparks/uhf/2015.10.22/correlation.pickle
-mpirun -n 6 ./beampark_correlator.py eiscat_uhf ~/data/spade/beamparks/uhf/2015.10.22/space-track.tles ~/data/spade/beamparks/uhf/2015.10.22/h5 ~/data/spade/beamparks/uhf/2015.10.22/correlation.pickle -o
-mpirun -n 6 ./beampark_correlator.py eiscat_esr ~/data/spade/beamparks/esr/2021.11.23/{space-track.tles,leo.h5,correlation.h5} -o
+mpirun -n 6 ./beampark_correlator.py eiscat_uhf ~/data/spade/beamparks/uhf/2015.10.22/space-track.tles ~/data/spade/beamparks/uhf/2015.10.22/h5 ~/data/spade/beamparks/uhf/2015.10.22/correlation.pickle -c
+mpirun -n 6 ./beampark_correlator.py eiscat_esr ~/data/spade/beamparks/esr/2021.11.23/{space-track.tles,leo.h5,correlation.h5} -c
 '''
 
 try:
@@ -57,11 +57,11 @@ def vector_diff_metric_std_normalized(t, r, v, r_ref, v_ref, **kwargs):
 def sorting_function(metric):
     '''How to sort the matches using a weight between range and range rate.
     '''
-    P = np.abs(metric['dr']) + 100*np.abs(metric['dv'])
+    P = np.sqrt(metric['dr']**2 + 1e3*metric['dv']**2)
     return np.argsort(P, axis=0)
 
 
-def save_correlation_data(output_pth, indecies, metric, cdat, meta=None):
+def save_correlation_data(output_pth, indecies, metric, correlation_data, meta=None):
     print(f'Saving correlation data to {output_pth}')
     with h5py.File(output_pth, 'w') as ds:
 
@@ -73,10 +73,22 @@ def save_correlation_data(output_pth, indecies, metric, cdat, meta=None):
             for key in meta:
                 ds.attrs[key] = meta[key]
 
+        ds['obj_ind'] = np.array(list(correlation_data.keys()))
+        ds_obj_ind = ds['obj_ind']
+        ds_obj_ind.make_scale('object_index')
+        ds_obj_ind.attrs['long_name'] = 'object population index'
+
+        cartesian = ds.create_dataset(
+            "axis",
+            data=[s.encode() for s in ["x", "y", "z"]],
+        )
+        cartesian.make_scale('cartesian_axis')
+        cartesian.attrs['long_name'] = 'cartesian axis names'
+
         ds['mch_ind'] = match_index
         ds_mch_ind = ds['mch_ind']
         ds_mch_ind.make_scale('match_index')
-        ds_mch_ind.attrs['long_name'] = 'nth matching index'
+        ds_mch_ind.attrs['long_name'] = 'nth best matching index'
 
         ds['obs_ind'] = observation_index
         ds_obs_ind = ds['obs_ind']
@@ -96,17 +108,17 @@ def save_correlation_data(output_pth, indecies, metric, cdat, meta=None):
         _create_ia_var(ds, 'match_oid', 'Matched object id in the used population', indecies, scales)
         _create_ia_var(ds, 'match_metric', 'Matching metric values for the object', metric, scales)
 
-        # we only had one input measurnment dict so input data index is 0
-        inp_dat_index = 0
+        # We currently only supply one dat dict to the correlator
+        measurement_set_index = 0
 
-        c_grp = ds.create_group("correlation_data")
-        for mind in match_index:
-            m_grp = c_grp.create_group(f'match_number_{mind}')
-            for oind in observation_index:
-                o_grp = m_grp.create_group(f'observation_number_{oind}')
-                _create_ia_var(o_grp, 'r', 'simulated range', cdat[mind][oind][inp_dat_index]['r_ref'], [ds_obs_ind], units='m')
-                _create_ia_var(o_grp, 'v', 'simulated range rate', cdat[mind][oind][inp_dat_index]['v_ref'], [ds_obs_ind], units='m/s')
-                _create_ia_var(o_grp, 'match', 'calculated metric', cdat[mind][oind][inp_dat_index]['match'], [ds_obs_ind])
+        def stacker(x, key):
+            return np.stack([val[measurement_set_index][key] for _, val in x.items()], axis=0)
+
+        scales = [ds_obj_ind, ds_obs_ind]
+        _create_ia_var(ds, 'r_sim', 'simulated range', stacker(correlation_data, 'r_ref'), scales, units='m')
+        _create_ia_var(ds, 'v_sim', 'simulated range rate', stacker(correlation_data, 'v_ref'), scales, units='m/s')
+        _create_ia_var(ds, 'match_sim', 'calculated metric', stacker(correlation_data, 'match'), scales)
+        _create_ia_var(ds, 'states', 'simulated states', stacker(correlation_data, 'states'), scales + [cartesian])
 
 
 def run():
@@ -121,7 +133,7 @@ def run():
     parser.add_argument('catalog', type=str, help='TLE catalog path')
     parser.add_argument('input', type=str, help='Observation data folder/file')
     parser.add_argument('output', type=str, help='Results output location')
-    parser.add_argument('-o', '--override', action='store_true', help='Override output location if it exists')
+    parser.add_argument('-c', '--clobber', action='store_true', help='Override output location if it exists')
     parser.add_argument('--std', action='store_true', help='Use measurement errors')
 
     args = parser.parse_args()
@@ -146,7 +158,7 @@ def run():
         meta_vars = []
 
     measurements = []
-    if output_pth.is_file() and not args.override:
+    if output_pth.is_file() and not args.clobber:
         print('Using cached data, not reading measurements file')
     else:
         if input_pth.is_file():
@@ -170,6 +182,7 @@ def run():
                 v = h_det['v'][()]*1e3  # km/s -> m/s
 
                 inds = np.argsort(t)
+
                 t = t[inds]
                 r = r[inds]
                 v = v[inds]
@@ -211,7 +224,7 @@ def run():
     print(f'Population size: {len(pop)}')
     print('Correlating data and population')
 
-    if output_pth.is_file() and not args.override:
+    if output_pth.is_file() and not args.clobber:
         print('Loading correlation data from cache')
         with open(output_pth, 'rb') as fh:
             indecies, metric, cdat = pickle.load(fh)
@@ -221,15 +234,16 @@ def run():
 
         MPI = comm is not None and comm.size > 1
 
-        indecies, metric, cdat = sorts.correlate(
+        indecies, metric, correlation_data = sorts.correlate(
             measurements = measurements,
             population = pop,
             n_closest = 1,
-            meta_variables=meta_vars,
-            metric=metric, 
-            sorting_function=sorting_function,
-            metric_dtype=[('dr', np.float64), ('dv', np.float64)],
-            metric_reduce=None,
+            meta_variables = meta_vars,
+            metric = metric, 
+            sorting_function = sorting_function,
+            metric_dtype = [('dr', np.float64), ('dv', np.float64)],
+            metric_reduce = None,
+            scalar_metric = False,
             MPI = MPI,
         )
 
@@ -238,7 +252,7 @@ def run():
                 output_pth, 
                 indecies, 
                 metric, 
-                cdat, 
+                correlation_data, 
                 meta = dict(
                     radar_name = args.radar,
                     tx_lat = radar.tx[0].lat,
