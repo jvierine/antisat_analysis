@@ -20,6 +20,7 @@ Examples:
 
 python beampark_correlator.py eiscat_uhf ~/data/spade/beamparks/uhf/2015.10.22/space-track.tles ~/data/spade/beamparks/uhf/2015.10.22/h5 ~/data/spade/beamparks/uhf/2015.10.22/correlation.pickle
 mpirun -n 6 ./beampark_correlator.py eiscat_uhf ~/data/spade/beamparks/uhf/2015.10.22/space-track.tles ~/data/spade/beamparks/uhf/2015.10.22/h5 ~/data/spade/beamparks/uhf/2015.10.22/correlation.pickle -o
+mpirun -n 6 ./beampark_correlator.py eiscat_esr ~/data/spade/beamparks/esr/2021.11.23/{space-track.tles,leo.h5,correlation.h5} -o
 '''
 
 try:
@@ -60,10 +61,7 @@ def sorting_function(metric):
     return np.argsort(P, axis=0)
 
 
-def save_correlation_data(output_pth, indecies, metric, cdat, radar_name='generic_radar'):
-    ## This is the old method
-    # with open(output_pth, 'wb') as fh:
-    #     pickle.dump([indecies, metric, cdat], fh)
+def save_correlation_data(output_pth, indecies, metric, cdat, meta=None):
     print(f'Saving correlation data to {output_pth}')
     with h5py.File(output_pth, 'w') as ds:
 
@@ -71,7 +69,9 @@ def save_correlation_data(output_pth, indecies, metric, cdat, radar_name='generi
         observation_index = np.arange(indecies.shape[1])
 
         # Create global attributes for dataset
-        ds.attrs['radar_name'] = radar_name
+        if meta is not None:
+            for key in meta:
+                ds.attrs[key] = meta[key]
 
         ds['mch_ind'] = match_index
         ds_mch_ind = ds['mch_ind']
@@ -96,7 +96,7 @@ def save_correlation_data(output_pth, indecies, metric, cdat, radar_name='generi
         _create_ia_var(ds, 'match_oid', 'Matched object id in the used population', indecies, scales)
         _create_ia_var(ds, 'match_metric', 'Matching metric values for the object', metric, scales)
 
-        #we only had one input measurnment dict so input data index is 0
+        # we only had one input measurnment dict so input data index is 0
         inp_dat_index = 0
 
         c_grp = ds.create_group("correlation_data")
@@ -109,16 +109,12 @@ def save_correlation_data(output_pth, indecies, metric, cdat, radar_name='generi
                 _create_ia_var(o_grp, 'match', 'calculated metric', cdat[mind][oind][inp_dat_index]['match'], [ds_obs_ind])
 
 
-
 def run():
 
     if comm is not None:
         print('MPI detected')
         if comm.size > 1:
             print('Using MPI...')
-
-    # TODO: 
-    # Make this able to switch between events.txt format (1 point / object) and high res mode (multiple points / object)
  
     parser = argparse.ArgumentParser(description='Calculate TLE catalog correlation for a beampark')
     parser.add_argument('radar', type=str, help='The observing radar system')
@@ -174,7 +170,6 @@ def run():
                 v = h_det['v'][()]*1e3  # km/s -> m/s
 
                 inds = np.argsort(t)
-                # inds = inds[:12] #FOR DEBUG
                 t = t[inds]
                 r = r[inds]
                 v = v[inds]
@@ -224,6 +219,8 @@ def run():
         if comm is not None:
             comm.barrier()
 
+        MPI = comm is not None and comm.size > 1
+
         indecies, metric, cdat = sorts.correlate(
             measurements = measurements,
             population = pop,
@@ -233,10 +230,26 @@ def run():
             sorting_function=sorting_function,
             metric_dtype=[('dr', np.float64), ('dv', np.float64)],
             metric_reduce=None,
+            MPI = MPI,
         )
 
         if comm is None or comm.rank == 0:
-            save_correlation_data(output_pth, indecies, metric, cdat, radar_name=args.radar)
+            save_correlation_data(
+                output_pth, 
+                indecies, 
+                metric, 
+                cdat, 
+                meta = dict(
+                    radar_name = args.radar,
+                    tx_lat = radar.tx[0].lat,
+                    tx_lon = radar.tx[0].lon,
+                    tx_alt = radar.tx[0].alt,
+                    rx_lat = radar.rx[0].lat,
+                    rx_lon = radar.rx[0].lon,
+                    rx_alt = radar.rx[0].alt,
+
+                ),
+            )
 
     if comm is None or comm.rank == 0:
         print('Individual measurement match metric:')
