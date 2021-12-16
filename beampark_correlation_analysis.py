@@ -8,6 +8,14 @@ import numpy as np
 import h5py
 from astropy.time import Time
 
+'''
+
+Example run
+
+python beampark_correlation_analysis.py ~/data/spade/beamparks/{uhf,esr}/2021.11.23/correlation.h5
+
+'''
+
 def plot_measurement_data(observed_data, simulated_data, axes=None):
     '''Plot the observed and simulated population object measurment parameters.
     '''

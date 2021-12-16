@@ -15,14 +15,17 @@ import sorts
 '''
 Example execution
 
-python multi_beampark_correlator.py ~/data/spade/beamparks/uhf/2021.11.23/space-track.tles ~/data/spade/beamparks/{uhf,esr}/2021.11.23/correlation.pickle
+python multi_beampark_correlator.py ~/data/spade/beamparks/uhf/2021.11.23/space-track.tles ~/data/spade/beamparks/{uhf,esr}/2021.11.23/correlation.h5
 '''
+
 
 def metric_merge(metric):
     return np.sqrt(metric['dr']**2 + 40*metric['dv']**2)
 
+
 def get_matches(data, bp, index):
     return data[bp['beampark'][index]]['metric'][bp['measurement_id'][index]]
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Analyse beampark correlation for a beampark')
@@ -52,8 +55,8 @@ if __name__ == '__main__':
 
         # Pick only best matches in row 0
         match_data[ind] = {
-            'match': indecies[0,:], 
-            'metric': metric[0,:],
+            'match': indecies[0, :], 
+            'metric': metric[0, :],
         }
 
         for oid in np.unique(match_data[ind]['match']):
@@ -69,10 +72,10 @@ if __name__ == '__main__':
                 objects[oid]['beampark'].append(ind)
                 objects[oid]['measurement_id'].append(indecies)
                 objects[oid]['num'] += 1
-                
-
+    
+    possible_multi = 0
     for oid, bp in objects.items():
-        #skip all objects only seen in one beampark
+        # skip all objects only seen in one beampark
         if bp['num'] < 2:
             continue
 
@@ -92,6 +95,9 @@ if __name__ == '__main__':
             print(f'OID - {oid}: Beampark-{ID} -> match={match}')
 
         print(f'OID - {oid}: {merged_data}')
+        possible_multi += 1
+
+    print(f'Possible multi-beampark observed objects: {possible_multi}')
 
     # print('Loading TLE population')
     # pop = sorts.population.tle_catalog(tle_pth, cartesian=False)
