@@ -286,6 +286,7 @@ def main():
 
     #add option to fix longtude of asc and/or eccentricity
     #add constant size and allow for saving of SNR arcs instead
+    #maybe start with just peak
 
     parser = argparse.ArgumentParser(description='Forward model to detmerine observation probabilitiy')
     parser.add_argument('config', type=pathlib.Path, help='Path to config')
