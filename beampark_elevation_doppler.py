@@ -26,6 +26,12 @@ import pyorb
 
 HERE = Path(__file__).parent
 
+
+def ecef_close(ecef1, ecef2, atol_pos=1e2, atol_vel=1e-1):
+    return np.allclose(ecef1[:3], ecef2[:3], atol=atol_pos) and \
+           np.allclose(ecef1[3:], ecef2[3:], atol=atol_vel)
+
+
 def get_off_axis_angle(station, states, ecef_k_vector):
     """
     one dimensional angle between on-axis position and target
@@ -101,7 +107,17 @@ def plot_inclination_results(anom, Omega, angle, ranges, range_rates, samples, o
     return figs, axes
 
 
-def optim_off_axis_angle(x, epoch, st, k_ecef, semi_major_axis, inclination):
+def compute_ecef_states(x, epoch, semi_major_axis, inclination):
+    """
+    x:  2-tuple of orbit elements mean anomaly and longitude of ascending node
+    epoch: time for transformation between inertial and Earth-fixed systems
+    semi_major_axis, inclination: the other orbital elements
+
+    Returns 6-element state vector(s) [px, py, pz, vx, vy, vz]
+    with units m for position and m/s for velocity
+
+    Factored out as common to the two functions below
+    """
     orbit = pyorb.Orbit(
         M0 = pyorb.M_earth, 
         degrees = True,
@@ -114,29 +130,16 @@ def optim_off_axis_angle(x, epoch, st, k_ecef, semi_major_axis, inclination):
         num = 1,
         type = 'mean',
     )
-    states = orbit.cartesian
-    ecef = sorts.frames.convert(epoch, states, in_frame='GCRS', out_frame='ITRS')
-    angle = np.degrees(get_off_axis_angle(st, ecef, k_ecef))
+    return sorts.frames.convert(epoch, orbit.cartesian, in_frame='GCRS', out_frame='ITRS')
 
-    return angle
+
+def optim_off_axis_angle(x, epoch, st, k_ecef, semi_major_axis, inclination):
+    ecef = compute_ecef_states(x, epoch, semi_major_axis, inclination)
+    return np.degrees(get_off_axis_angle(st, ecef, k_ecef))
 
 
 def orb_to_range_and_range_rate(x, epoch, st, semi_major_axis, inclination):
-    orbit = pyorb.Orbit(
-        M0 = pyorb.M_earth, 
-        degrees = True,
-        a = semi_major_axis, 
-        e = 0, 
-        i = inclination, 
-        omega = 0,
-        Omega = x[1],
-        anom = x[0],
-        num = 1,
-        type = 'mean',
-    )
-    states = orbit.cartesian
-    ecef = sorts.frames.convert(epoch, states, in_frame='GCRS', out_frame='ITRS')
-
+    ecef = compute_ecef_states(x, epoch, semi_major_axis, inclination)
     return get_range_and_range_rate(st, ecef)
 
 
@@ -180,7 +183,7 @@ def cache_path(station, radar_name='generic', topdir='cache', azim=None, elev=No
 
 
 def build_cache(station, radar_name='generic', cache_dir=HERE / 'cache', azim=None, elev=None,
-                degrees=True, clobber=False):
+                degrees=True, clobber=False, dry_run=False):
     """
     Create a cache file of r_rdot computations for a given radar and pointing direction.
 
@@ -201,6 +204,8 @@ def build_cache(station, radar_name='generic', cache_dir=HERE / 'cache', azim=No
         If True, azim and elev are given in degrees
     - clobber: boolean, default: False
         If True, existing cache files will be overwritten
+    - dry_run: boolean, default: False
+        If True, nothing will be written to file
 
     Structure of generated file:
 
@@ -253,7 +258,7 @@ def build_cache(station, radar_name='generic', cache_dir=HERE / 'cache', azim=No
     cpath = cache_path(station, radar_name=radar_name,
                     topdir=cache_dir, azim=azim, elev=elev, degrees=degrees)
 
-    if cpath.exists() and not clobber:
+    if cpath.exists() and not clobber and not dry_run:
         raise FileExistsError('Cache file {cpath.name} exists in cache')
 
     if azim is None:
@@ -262,6 +267,7 @@ def build_cache(station, radar_name='generic', cache_dir=HERE / 'cache', azim=No
         elev = station.beam.elevation
 
     station.beam.sph_point(azim, elev, radians=False)
+    k_ecef = station.pointing_ecef
 
     # Epoch of observation
     epoch = Time("2000-01-01T00:10:00Z", format='isot')
@@ -272,7 +278,11 @@ def build_cache(station, radar_name='generic', cache_dir=HERE / 'cache', azim=No
     # Values of dimension axis for orbit plane inclination
     incl = np.r_[69:111.1:0.5]
 
-    if comm.rank == 0:
+    if comm.rank == 0 and dry_run:
+        incl = np.r_[92:100.1:0.5]
+        print("\n\n  *** DEBUG LIMITED INCLINATIONS ***\n\n")
+
+    if comm.rank == 0 and not dry_run:
         print('Rank-0: Setting up cache file')
         with h5py.File(cpath, 'w') as ds:
 
@@ -340,7 +350,6 @@ def build_cache(station, radar_name='generic', cache_dir=HERE / 'cache', azim=No
     anom.shape = -1             # unravel
     Omega.shape = -1
 
-    k_ecef = station.pointing_ecef
     orbit = pyorb.Orbit(
         M0 = pyorb.M_earth,
         degrees = True,
@@ -388,37 +397,44 @@ def build_cache(station, radar_name='generic', cache_dir=HERE / 'cache', azim=No
                 lambda x: optim_off_axis_angle(x, epoch, station, k_ecef, a, inci),
                 x_start,
                 method='Nelder-Mead',
-                # options={'adaptive': True, 'fatol': 0.01},
-                # method='BFGS',
-                # method='CG',
-                # options={'gtol': 1e-3},
             )
 
-            # Clever trick here.
-            # Find the index of the smallest angle which satisfies the inequality
-            other_ind = np.argmax(np.abs(anom[inds] - anom[inds[0]]) > 5.0)
-            x_start2 = [anom[inds[other_ind]], Omega[inds[other_ind]]]
-            xhat2 = sio.minimize(
-                lambda x: optim_off_axis_angle(x, epoch, station, k_ecef, a, inci),
-                x_start2,
-                method='Nelder-Mead',
-                # options={'adaptive': True, 'fatol': 0.01},
-                # method='BFGS',
-                # method='CG',
-                # options={'gtol': 1e-3},
-            )
+            if xhat1.fun > 1.0:
+                # If the best we could do was more than 1 degrees off axis,
+                # then there's no point in looking for a second solution
+                xhat2 = xhat1
+                r1, rdot1 = orb_to_range_and_range_rate(xhat1.x, epoch, station, a, inci)
+                r2, rdot2 = r1, rdot1
+            else:
+                # Clever trick here.
+                # Find the index of the smallest angle which satisfies the inequality
+                other_ind = np.argmax(np.abs(anom[inds] - anom[inds[0]]) > 5.0) #
+                # other_ind = np.argmax(anom[inds] > anom[inds[0]] + 5.0)       # Nope, bad idea
+                x_start2 = [anom[inds[other_ind]], Omega[inds[other_ind]]]
+                xhat2 = sio.minimize(
+                    lambda x: optim_off_axis_angle(x, epoch, station, k_ecef, a, inci),
+                    x_start2,
+                    method='Nelder-Mead',
+                )
+                # now we have two solutions, figure out if they are distinct,
+                # which one is ascending and descending, and their ranges and range rates,
+                # then put all of those (and the off-axis angles) into the file
 
-            # now we have two solutions, figure out if they are distinct,
-            # which one is ascending and descending, and their ranges and range rates,
-            # then put all of those (and the off-axis angles) into the file
+                # ascending node is the one with positive z velocity in ECEF
+                ecef1 = compute_ecef_states(xhat1.x, epoch, a, inci)
+                ecef2 = compute_ecef_states(xhat2.x, epoch, a, inci)
 
-            # ascending node is the one with smallest mean anomaly, put that in xhat1
+                if not ecef_close(ecef1, ecef2):
+                    assert np.sign(ecef1.item(5) * ecef2.item(5)) < 0, \
+                        "Should be one ascending and one descending solution!"
 
-            if xhat1.x[0] > xhat2.x[0]:
-                xhat1, xhat2 = xhat2, xhat1
+                # make sure xhat1 is the ascending solution
+                if np.sign(ecef1.item(5)) < 0:
+                    xhat1, xhat2 = xhat2, xhat1
+                    ecef1, ecef2 = ecef2, ecef1
 
-            r1, rdot1 = orb_to_range_and_range_rate(xhat1.x, epoch, station, a, inci)
-            r2, rdot2 = orb_to_range_and_range_rate(xhat2.x, epoch, station, a, inci)
+                r1, rdot1 = get_range_and_range_rate(station, ecef1)
+                r2, rdot2 = get_range_and_range_rate(station, ecef2)
 
             # Store data
             RAM_ds['nu_a'][ii,kk] = xhat1.x[0]
@@ -460,12 +476,13 @@ def build_cache(station, radar_name='generic', cache_dir=HERE / 'cache', azim=No
         
         print(f'Rank-{comm.rank}: Data distributing done')
 
-    if comm.rank == 0:
+    if comm.rank == 0 and not dry_run:
         with h5py.File(cpath, 'a') as ds:
             print(f'Rank-{comm.rank}: Saving to cache file')
             for key in var_names:
                 ds[key][:, :] = RAM_ds[key]
         print(f'Rank-{comm.rank}: Cache file done')
+
 
 def plot_from_cachefile(cachefilename, incl=None):
 
@@ -499,10 +516,10 @@ def plot_from_cachefile(cachefilename, incl=None):
             ok_d = np.where(theta_d <= 1.0)
             nok_d = np.where(theta_d >= 1.0)
 
-            hh = plt.plot(r_a[ok_a], rdot_a[ok_a], '-',
-                          r_d[ok_d], rdot_d[ok_d], '--',
-                          r_a[nok_a], rdot_a[nok_a], ':',
-                          r_d[nok_d], rdot_d[nok_d], ':', color=cmap(ii))
+            hh = plt.plot(r_a[ok_a], rdot_a[ok_a], 'd-',
+                          r_d[ok_d], rdot_d[ok_d], 'd--',
+                          r_a[nok_a], rdot_a[nok_a], 'd:',
+                          r_d[nok_d], rdot_d[nok_d], 'd:', color=cmap(ii))
             lh.append(hh[0])
             lab.append(f'incl = {inci}')
 
@@ -520,32 +537,180 @@ def plot_from_cachefile(cachefilename, incl=None):
         plt.legend(lh, lab)
 
 
-def do_create_demoplots():
+def draw_annotated_map(cachefilename, station, ii, kk, ah=None):
+  shape = 101, 103
+  Omx = np.linspace(0, 360, shape[0])
+  nux = np.linspace(0, 360, shape[1])
 
+  with h5py.File(cachefilename, 'r') as ds:
+    incl = ds['incl'][:]
+    sema = ds['sema'][:]
+
+    azim = ds['azimuth'][()]
+    elev = ds['elevation'][()]
+
+    station.beam.sph_point(azim, elev, radians=False)
+    k_ecef = station.pointing_ecef
+
+    inci = incl[ii]
+    a = sema[kk]
+    anom, Omega = np.meshgrid(nux, Omx, indexing='ij')
+    anom.shape = -1             # unravel
+    Omega.shape = -1
+
+    orbit = pyorb.Orbit(
+        M0 = pyorb.M_earth,
+        degrees = True,
+        a = sema[0],
+        e = 0,
+        i = 0,
+        omega = 0,
+        Omega = Omega,
+        anom = anom,
+        num = anom.size,
+        type = 'mean',
+    )
+
+    orbit.i = inci
+    orbit.a = a
+
+    # maps
+    states = orbit.cartesian
+    ecef = sorts.frames.convert(epoch, states, in_frame='GCRS', out_frame='ITRS')
+    angle = np.degrees(get_off_axis_angle(station, ecef, k_ecef))
+    r, rdot = get_range_and_range_rate(station, ecef)
+
+    if ah is None:
+        ah = plt.gca()
+    try:
+        n_plots = len(ah)
+    except TypeError:
+        ah = [ah]
+        n_plots = 1
+
+    Om_a = ds['Om_a'][ii][kk]
+    Om_d = ds['Om_d'][ii][kk]
+
+    nu_a = ds['nu_a'][ii][kk]
+    nu_d = ds['nu_d'][ii][kk]
+
+    if n_plots >= 1:
+        angle.shape = shape
+        imh = ah[0].pcolormesh(Omx, nux, angle);
+        ah[0].text(Om_a, nu_a, 'A', textcolor='red')
+        ah[0].text(Om_d, nu_d, 'D', textcolor='red')
+        plt.colorbar(imh, ax=ah[0], fraction=0.04, pad=0.01)
+        ah[0].set_title('Off-axis angle [deg]')
+
+    if n_plots >= 2:
+        r.shape = shape
+        imh = ah[1].pcolormesh(Omx, nux, r);
+        plt.colorbar(imh, ax=ah[1], fraction=0.04, pad=0.01)
+        ah[1].set_title('Range [m]')
+
+    if n_plots >= 3:
+        rdot.shape = shape
+        imh = ah[2].pcolormesh(Omx, nux, rdot);
+        plt.colorbar(imh, ax=ah[2], fraction=0.04, pad=0.01)
+        ah[2].set_title('Range [m]')
+
+    if n_plots >= 4:
+        vz = ecef[5].reshape(shape)
+        imh = ah[3].pcolormesh(Omx, nux, vz, cmap=plt.cm.Accent, vmin=-400, vmax=400);
+        plt.colorbar(imh, ax=ah[3], fraction=0.04, pad=0.01)
+        ah[3].set_title('z-component of velocity [m/s]')
+
+
+def build_map(station, ii, kk, azim=None, elev=None):
+
+    if azim is None:
+        azim = station.beam.azimuth
+    if elev is None:
+        elev = station.beam.elevation
+
+    station.beam.sph_point(azim, elev, radians=False)
+    k_ecef = station.pointing_ecef
+
+    # Epoch of observation
+    epoch = Time("2000-01-01T00:10:00Z", format='isot')
+
+    # Values of dimension axis for orbit plane inclination
+    if np.issubdtype(type(ii), int):
+        incl = np.r_[69:111.1:0.5]
+        inci = incl[ii]
+    else:
+        inci = ii
+
+    # Values of dimension axis for orbit semimajor axis
+    if np.issubdtype(type(kk), int):
+        sema = 1000 * (6371 + np.linspace(300, 3000, 20))
+        a = sema[kk]
+    else:
+        a = kk
+
+    # First some invariants
+    samples = 101, 103  # for mean anomaly and longitude of ascending node, respectively
+    # Now start looking for orbits that intersect the pointing of the beam
+    anom, Omega = np.meshgrid(
+        np.linspace(0, 360, num=samples[0]),
+        np.linspace(0, 360, num=samples[1]),
+        indexing='ij',
+    )
+    anom.shape = -1             # unravel
+    Omega.shape = -1
+
+    orbit = pyorb.Orbit(
+        M0 = pyorb.M_earth,
+        degrees = True,
+        a = sema[0],
+        e = 0,
+        i = 0,
+        omega = 0,
+        Omega = Omega,
+        anom = anom,
+        num = anom.size,
+        type = 'mean',
+    )
+
+    orbit.i = inci
+    orbit.a = a
+
+    states = orbit.cartesian
+    ecef = sorts.frames.convert(epoch, states, in_frame='GCRS', out_frame='ITRS')
+    angle = np.degrees(get_off_axis_angle(station, ecef, k_ecef))
+    r, rdot = get_range_and_range_rate(station, ecef)
+
+    print(f"inclination: {inci}, semimajor axis {a:.0f}m (altitude {a/1000 - 6371:.1f} km)")
+
+    return states, ecef, angle, r, rdot
+
+
+def do_create_demoplots():
+    figsize = 10,7
     # UHF east-pointing demo plot
     cachefilename = 'cache/eiscat_uhf/az90.0_el75.0.h5'
-    fig = plt.figure()
+    fig = plt.figure(figsize=figsize)
     plot_from_cachefile(cachefilename, incl=[69, 70, 75, 80, 85, 90, 95, 100, 105, 110])
     plt.savefig('new_cache_figure_uhf_east.png')
 
     cachefilename = 'cache/eiscat_uhf/az90.0_el45.0.h5'
-    fig = plt.figure()
+    fig = plt.figure(figsize=figsize)
     plot_from_cachefile(cachefilename, incl=[69.5, 70, 75, 80, 85, 90, 95, 100, 105, 110])
     plt.savefig('new_cache_figure_uhf_east_low.png')
 
     # ESR field-aligned demo plot
     cachefilename = 'cache/eiscat_esr/az185.5_el82.1.h5'
-    fig = plt.figure()
+    fig = plt.figure(figsize=figsize)
     plot_from_cachefile(cachefilename, incl=[77, 78, 80, 85, 90, 95, 100, 102, 104])
     plt.savefig('new_cache_figure_esr_field_aligned.png')
 
     cachefilename = 'cache/eiscat_esr/az90.0_el75.0.h5'
-    fig = plt.figure()
+    fig = plt.figure(figsize=figsize)
     plot_from_cachefile(cachefilename, incl=[78.5, 80, 85, 90, 95, 101])
     plt.savefig('new_cache_figure_esr_east.png')
 
     cachefilename = 'cache/eiscat_esr/az0.0_el35.0.h5'
-    fig = plt.figure()
+    fig = plt.figure(figsize=figsize)
     plot_from_cachefile(cachefilename, incl=[78.5, 80, 85, 90, 95, 101])
     plt.savefig('new_cache_figure_esr_north.png')
 
@@ -561,6 +726,7 @@ def main():
     parser_run.add_argument('azimuth', type=float, help='Azimuth of beampark')
     parser_run.add_argument('elevation', type=float, help='Elevation of beampark')
     parser_run.add_argument('-c', '--clobber', action='store_true', help='Remove cache data before running')
+    parser_run.add_argument('-d', '--dry-run', action='store_true', help='Do not actually write to file')
 
     parser_plot = subparsers.add_parser('plot', help='Plot results from cache')
     parser_plot.add_argument('cache', type=str, help='Path to cache file to plot')
@@ -577,7 +743,7 @@ def main():
         epoch = Time("2000-01-01T00:10:00Z", format='isot')
 
         build_cache(st, radar_name=args.radar, azim=args.azimuth, elev=args.elevation,
-                        degrees=True, clobber=args.clobber)
+                        degrees=True, clobber=args.clobber, dry_run=args.dry_run)
     elif args.command == 'plot':
 
         fig = plt.figure()
