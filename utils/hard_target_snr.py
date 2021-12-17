@@ -610,7 +610,7 @@ def debug_rcs_sweep(wavelength=1.0):
         
 if __name__ == "__main__":
     debug_rcs_sweep()
-    exit(0)
+    # exit(0)
     debug_sweep_sem_rcs()
 
     debug_snr_sweep()    
