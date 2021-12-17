@@ -1,5 +1,6 @@
 # DATA files not included in repo
 data/
+cache/eiscat_uhf/density_mapping
 figures/
 
 #Sublime
