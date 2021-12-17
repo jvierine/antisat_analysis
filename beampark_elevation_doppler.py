@@ -484,10 +484,24 @@ def build_cache(station, radar_name='generic', cache_dir=HERE / 'cache', azim=No
         print(f'Rank-{comm.rank}: Cache file done')
 
 
-def plot_from_cachefile(cachefilename, incl=None):
+def plot_from_cachefile(cachefilename, incl=None, linestyles=None, symb=None, cmap=None, legend=True):
 
     good_limit = 1.0            # how much off-axis pointing is okay (degrees)
-    cmap = plt.get_cmap('tab10')
+
+    if linestyles is None:
+        lst = {'ok_a' : '-',
+               'ok_d' : '--',
+               'nok_a': ':',
+               'nok_d': ':'}
+    else:
+        lst = linestyles.copy()
+
+    if symb is not None:
+        for k in lst:
+            lst[k] = symb + lst[k]
+
+    if cmap is None:
+        cmap = plt.get_cmap('tab10')
 
     if incl is None:
         incl = np.arange(70, 110.1, 5)
@@ -516,10 +530,10 @@ def plot_from_cachefile(cachefilename, incl=None):
             ok_d = np.where(theta_d <= 1.0)
             nok_d = np.where(theta_d >= 1.0)
 
-            hh = plt.plot(r_a[ok_a], rdot_a[ok_a], 'd-',
-                          r_d[ok_d], rdot_d[ok_d], 'd--',
-                          r_a[nok_a], rdot_a[nok_a], 'd:',
-                          r_d[nok_d], rdot_d[nok_d], 'd:', color=cmap(ii))
+            hh = plt.plot(r_a[ok_a],  rdot_a[ok_a],  lst['ok_a'],
+                          r_d[ok_d],  rdot_d[ok_d],  lst['ok_d'],
+                          r_a[nok_a], rdot_a[nok_a], lst['nok_a'],
+                          r_d[nok_d], rdot_d[nok_d], lst['nok_d'], color=cmap(ii))
             lh.append(hh[0])
             lab.append(f'incl = {inci}')
 
@@ -534,7 +548,11 @@ def plot_from_cachefile(cachefilename, incl=None):
         plt.title(f'range rate vs range at {slat} {slon} az {az:.1f} el {el:.1f}')
         plt.xlabel(f"range [{ds['r_a'].attrs['units']}]")
         plt.ylabel(f"range rate [{ds['rdot_a'].attrs['units']}]")
-        plt.legend(lh, lab)
+
+        if legend:
+            plt.legend(lh, lab)
+        else:
+            return lh, lab
 
 
 def draw_annotated_maps(cachefilename, station, ii, kk, ah=None):
@@ -723,7 +741,7 @@ def plot_Om_nu(cachefilename):
     fh.suptitle(plot_title)
 
 
-def build_map(station, ii, kk, azim=None, elev=None):
+def build_maps(station, ii, kk, azim=None, elev=None):
 
     if azim is None:
         azim = station.beam.azimuth
@@ -794,27 +812,37 @@ def do_create_demoplots():
     fig = plt.figure(figsize=figsize)
     plot_from_cachefile(cachefilename, incl=[69, 70, 75, 80, 85, 90, 95, 100, 105, 110])
     plt.savefig('new_cache_figure_uhf_east.png')
+    plot_Om_nu(cachefilename)
+    plt.savefig('Om_nu_figure_uhf_east.png')
 
     cachefilename = 'cache/eiscat_uhf/az90.0_el45.0.h5'
     fig = plt.figure(figsize=figsize)
     plot_from_cachefile(cachefilename, incl=[69.5, 70, 75, 80, 85, 90, 95, 100, 105, 110])
     plt.savefig('new_cache_figure_uhf_east_low.png')
+    plot_Om_nu(cachefilename)
+    plt.savefig('Om_nu_figure_uhf_east_low.png')
 
     # ESR field-aligned demo plot
     cachefilename = 'cache/eiscat_esr/az185.5_el82.1.h5'
     fig = plt.figure(figsize=figsize)
     plot_from_cachefile(cachefilename, incl=[77, 78, 80, 85, 90, 95, 100, 102, 104])
     plt.savefig('new_cache_figure_esr_field_aligned.png')
+    plot_Om_nu(cachefilename)
+    plt.savefig('Om_nu_figure_esr_field_aligned.png')
 
     cachefilename = 'cache/eiscat_esr/az90.0_el75.0.h5'
     fig = plt.figure(figsize=figsize)
     plot_from_cachefile(cachefilename, incl=[78.5, 80, 85, 90, 95, 101])
     plt.savefig('new_cache_figure_esr_east.png')
+    plot_Om_nu(cachefilename)
+    plt.savefig('Om_nu_figure_esr_east.png')
 
     cachefilename = 'cache/eiscat_esr/az0.0_el35.0.h5'
     fig = plt.figure(figsize=figsize)
     plot_from_cachefile(cachefilename, incl=[78.5, 80, 85, 90, 95, 101])
     plt.savefig('new_cache_figure_esr_north.png')
+    plot_Om_nu(cachefilename)
+    plt.savefig('Om_nu_figure_esr_north.png')
 
 
 def main():
