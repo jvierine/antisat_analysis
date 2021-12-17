@@ -26,6 +26,8 @@ import pyorb
 
 HERE = Path(__file__).parent
 
+Re_km = 6371
+
 
 def ecef_close(ecef1, ecef2, atol_pos=1e2, atol_vel=1e-1):
     return np.allclose(ecef1[:3], ecef2[:3], atol=atol_pos) and \
@@ -73,9 +75,9 @@ def get_range_and_range_rate(station, states):
 def plot_inclination_results(anom, Omega, angle, ranges, range_rates, samples, orb_hits=None):
     fig, ax = plt.subplots()
     pc = ax.pcolormesh(
-        anom.reshape(samples), 
-        Omega.reshape(samples), 
-        angle.reshape(samples), 
+        anom.reshape(samples),
+        Omega.reshape(samples),
+        angle.reshape(samples),
         shading='gouraud',
     )
     fig.colorbar(pc, ax=ax)
@@ -88,16 +90,16 @@ def plot_inclination_results(anom, Omega, angle, ranges, range_rates, samples, o
 
     fig, ax = plt.subplots(1, 2)
     pc = ax[0].pcolormesh(
-        anom.reshape(samples), 
-        Omega.reshape(samples), 
-        ranges.reshape(samples), 
+        anom.reshape(samples),
+        Omega.reshape(samples),
+        ranges.reshape(samples),
         shading='gouraud',
     )
     fig.colorbar(pc, ax=ax[0])
     pc = ax[1].pcolormesh(
-        anom.reshape(samples), 
-        Omega.reshape(samples), 
-        range_rates.reshape(samples), 
+        anom.reshape(samples),
+        Omega.reshape(samples),
+        range_rates.reshape(samples),
         shading='gouraud',
     )
     fig.colorbar(pc, ax=ax[1])
@@ -119,11 +121,11 @@ def compute_ecef_states(x, epoch, semi_major_axis, inclination):
     Factored out as common to the two functions below
     """
     orbit = pyorb.Orbit(
-        M0 = pyorb.M_earth, 
+        M0 = pyorb.M_earth,
         degrees = True,
-        a = semi_major_axis, 
-        e = 0, 
-        i = inclination, 
+        a = semi_major_axis,
+        e = 0,
+        i = inclination,
         omega = 0,
         Omega = x[1],
         anom = x[0],
@@ -273,7 +275,7 @@ def build_cache(station, radar_name='generic', cache_dir=HERE / 'cache', azim=No
     epoch = Time("2000-01-01T00:10:00Z", format='isot')
 
     # Values of dimension axis for orbit semimajor axis
-    sema = 1000 * (6371 + np.linspace(300, 3000, 20))
+    sema = 1000 * (Re_km + np.linspace(300, 3000, 20))
 
     # Values of dimension axis for orbit plane inclination
     incl = np.r_[69:111.1:0.5]
@@ -371,10 +373,10 @@ def build_cache(station, radar_name='generic', cache_dir=HERE / 'cache', azim=No
     pbar = pbars[comm.rank]
 
     var_names = [
-        'nu_a', 'nu_d', 'Om_a', 
-        'Om_d', 'theta_a', 'theta_d', 
-        'r_a', 'r_d', 'rdot_a', 
-        'rdot_d', 
+        'nu_a', 'nu_d', 'Om_a',
+        'Om_d', 'theta_a', 'theta_d',
+        'r_a', 'r_d', 'rdot_a',
+        'rdot_d',
     ]
     RAM_ds = {key: np.empty((len(incl), len(sema)), dtype=incl.dtype) for key in var_names}
 
@@ -465,7 +467,6 @@ def build_cache(station, radar_name='generic', cache_dir=HERE / 'cache', azim=No
                 for ID in range(T, len(incl), comm.size):
                     for ki, key in enumerate(var_names):
                         RAM_ds[key][ID,:] = comm.recv(source=T, tag=tagger(ID, ki))
-            
                     print(f'received packet {ID} from PID{T}')
         else:
             print(f'Rank-{comm.rank}: Sending results')
@@ -473,7 +474,6 @@ def build_cache(station, radar_name='generic', cache_dir=HERE / 'cache', azim=No
             for ID in range(comm.rank, len(incl), comm.size):
                 for ki, key in enumerate(var_names):
                     comm.send(RAM_ds[key][ID,:], dest=0, tag=tagger(ID, ki))
-        
         print(f'Rank-{comm.rank}: Data distributing done')
 
     if comm.rank == 0 and not dry_run:
@@ -496,7 +496,7 @@ def plot_from_cachefile(cachefilename, incl=None):
 
         dsincl = ds['incl'][:]
         sma = ds['sema'][:]
-        height = sma - 6371e3       # height over average Earth radius
+        height = sma - Re_km*1e3       # height over average Earth radius
 
         lh = []
         lab = []
@@ -537,23 +537,46 @@ def plot_from_cachefile(cachefilename, incl=None):
         plt.legend(lh, lab)
 
 
-def draw_annotated_map(cachefilename, station, ii, kk, ah=None):
-  shape = 101, 103
-  Omx = np.linspace(0, 360, shape[0])
-  nux = np.linspace(0, 360, shape[1])
+def draw_annotated_maps(cachefilename, station, ii, kk, ah=None):
 
-  with h5py.File(cachefilename, 'r') as ds:
-    incl = ds['incl'][:]
-    sema = ds['sema'][:]
+    with h5py.File(cachefilename, 'r') as ds:
 
-    azim = ds['azimuth'][()]
-    elev = ds['elevation'][()]
+        incl = ds['incl'][:]
+        sema = ds['sema'][:]
+
+        azim = ds['azimuth'][()]
+        elev = ds['elevation'][()]
+
+        Om_a = ds['Om_a'][ii][kk]
+        Om_d = ds['Om_d'][ii][kk]
+
+        nu_a = ds['nu_a'][ii][kk]
+        nu_d = ds['nu_d'][ii][kk]
+
+        r_a = ds['r_a'][ii][kk]
+        r_d = ds['r_d'][ii][kk]
+
+        rdot_a = ds['rdot_a'][ii][kk]
+        rdot_d = ds['rdot_d'][ii][kk]
+
+        epoch = Time(ds.attrs['epoch'], format='isot')
+
+    inci = incl[ii]
+    a = sema[kk]
+
+    print(f"inclination: {inci}, semimajor axis {a:.0f}m (altitude {a/1000 - Re_km:.1f} km)")
+    print(f"ascending  range {r_a/1000:.1f} km, range rate {rdot_a/1000:.3f} km/s")
+    print(f"descending range {r_d/1000:.1f} km, range rate {rdot_d/1000:.3f} km/s")
+
+    # Epoch of observation
+
+    shape = 101, 103
+    nux = np.linspace(0, 360, shape[0])
+    Omx = np.linspace(0, 360, shape[1])
 
     station.beam.sph_point(azim, elev, radians=False)
     k_ecef = station.pointing_ecef
 
-    inci = incl[ii]
-    a = sema[kk]
     anom, Omega = np.meshgrid(nux, Omx, indexing='ij')
     anom.shape = -1             # unravel
     Omega.shape = -1
@@ -581,44 +604,123 @@ def draw_annotated_map(cachefilename, station, ii, kk, ah=None):
     r, rdot = get_range_and_range_rate(station, ecef)
 
     if ah is None:
-        ah = plt.gca()
+        ah = [plt.gca()]
     try:
+        ah.shape = -1
         n_plots = len(ah)
     except TypeError:
         ah = [ah]
         n_plots = 1
 
-    Om_a = ds['Om_a'][ii][kk]
-    Om_d = ds['Om_d'][ii][kk]
-
-    nu_a = ds['nu_a'][ii][kk]
-    nu_d = ds['nu_d'][ii][kk]
-
     if n_plots >= 1:
         angle.shape = shape
-        imh = ah[0].pcolormesh(Omx, nux, angle);
-        ah[0].text(Om_a, nu_a, 'A', textcolor='red')
-        ah[0].text(Om_d, nu_d, 'D', textcolor='red')
+        imh = ah[0].pcolormesh(nux, Omx, angle.T);
+        ah[0].text(nu_a, Om_a, 'A', color='red')
+        ah[0].text(nu_d, Om_d, 'D', color='red')
+        ah[0].plot(nu_a, Om_a, 'r+', nu_d, Om_d, 'rx')
         plt.colorbar(imh, ax=ah[0], fraction=0.04, pad=0.01)
+        ah[0].set_xlabel('mean anomaly [$\\nu$]')
+        ah[0].set_ylabel('longitude of ascending node [$\Omega$]')
         ah[0].set_title('Off-axis angle [deg]')
 
     if n_plots >= 2:
         r.shape = shape
-        imh = ah[1].pcolormesh(Omx, nux, r);
+        rmin = min(r_a, r_d)
+        imh = ah[1].pcolormesh(nux, Omx, r.T-rmin, vmax=4000);
+        ah[1].text(nu_a, Om_a, 'A', color='red')
+        ah[1].text(nu_d, Om_d, 'D', color='red')
+        ah[1].plot(nu_a, Om_a, 'r+', nu_d, Om_d, 'rx')
         plt.colorbar(imh, ax=ah[1], fraction=0.04, pad=0.01)
+        ah[1].set_xlabel('mean anomaly [$\\nu$]')
+        ah[1].set_ylabel('longitude of ascending node [$\Omega$]')
         ah[1].set_title('Range [m]')
 
     if n_plots >= 3:
         rdot.shape = shape
-        imh = ah[2].pcolormesh(Omx, nux, rdot);
+        imh = ah[2].pcolormesh(nux, Omx, rdot.T);
+        ah[2].text(nu_a, Om_a, 'A', color='red')
+        ah[2].text(nu_d, Om_d, 'D', color='red')
+        ah[2].plot(nu_a, Om_a, 'r+', nu_d, Om_d, 'rx')
         plt.colorbar(imh, ax=ah[2], fraction=0.04, pad=0.01)
-        ah[2].set_title('Range [m]')
+        ah[2].set_xlabel('mean anomaly [$\\nu$]')
+        ah[2].set_ylabel('longitude of ascending node [$\Omega$]')
+        ah[2].set_title('Range rate [m/s]')
 
     if n_plots >= 4:
         vz = ecef[5].reshape(shape)
-        imh = ah[3].pcolormesh(Omx, nux, vz, cmap=plt.cm.Accent, vmin=-400, vmax=400);
+        imh = ah[3].pcolormesh(nux, Omx, vz.T, cmap=plt.cm.Accent, vmin=-400, vmax=400);
+        ah[3].text(nu_a, Om_a, 'A', color='red')
+        ah[3].text(nu_d, Om_d, 'D', color='red')
+        ah[3].plot(nu_a, Om_a, 'r+', nu_d, Om_d, 'rx')
         plt.colorbar(imh, ax=ah[3], fraction=0.04, pad=0.01)
+        ah[3].set_xlabel('mean anomaly [$\\nu$]')
+        ah[3].set_ylabel('longitude of ascending node [$\Omega$]')
         ah[3].set_title('z-component of velocity [m/s]')
+
+    fh = ah[0].get_figure()
+    fh.suptitle(f"inc {inci} sm axis {a:.0f}m (alt{a/1000 - Re_km:.1f} km)")
+    #
+    #            f"ascending  range {r_a/1000:.1f} km, range rate {rdot_a/1000:.3f} km/s\n" + \
+    #            f"descending range {r_d/1000:.1f} km, range rate {rdot_d/1000:.3f} km/s\n")
+
+
+def plot_Om_nu(cachefilename):
+    with h5py.File(cachefilename, 'r') as ds:
+
+        incl = ds['incl'][:]
+        sema = ds['sema'][:]
+
+        azim = ds['azimuth'][()]
+        elev = ds['elevation'][()]
+
+        Om_a = ds['Om_a'][...]
+        Om_d = ds['Om_d'][...]
+
+        nu_a = ds['nu_a'][...]
+        nu_d = ds['nu_d'][...]
+
+        theta_a = ds['theta_a'][...]
+        theta_d = ds['theta_d'][...]
+
+        radar_name = ds.attrs['radar_name']
+
+    plot_title = f'{radar_name} az {azim} el {elev}'
+
+    fh, ah = plt.subplots(2,2, sharex='all', sharey='all')
+
+    ax = ah[0,0]
+    imh = ax.pcolormesh(sema, incl, Om_a)
+    ax.set_xlabel('Sem.mj.ax [m]')
+    ax.set_ylabel('Inclination [deg]')
+    ax.set_title('Longitude asc.node [deg] asc. sol')
+    plt.colorbar(imh, ax=ax, fraction=0.04, pad=0.01)
+    ax.contour(sema, incl, theta_a, [1, 2, 5, 10], cmap='inferno_r')
+
+    ax = ah[1,0]
+    imh = ax.pcolormesh(sema, incl, Om_d)
+    ax.set_xlabel('Sem.mj.ax [m]')
+    ax.set_ylabel('Inclination [deg]')
+    ax.set_title('Longitude asc.node [deg] dsc. sol')
+    plt.colorbar(imh, ax=ax, fraction=0.04, pad=0.01)
+    ax.contour(sema, incl, theta_d, [1, 2, 5, 10], cmap='inferno_r')
+
+    ax = ah[0,1]
+    imh = ax.pcolormesh(sema, incl, nu_a)
+    ax.set_xlabel('Sem.mj.ax [m]')
+    ax.set_ylabel('Inclination [deg]')
+    ax.set_title('Mean anomaly [deg] asc. sol')
+    plt.colorbar(imh, ax=ax, fraction=0.04, pad=0.01)
+    ax.contour(sema, incl, theta_a, [1, 2, 5, 10], cmap='inferno_r')
+
+    ax = ah[1,1]
+    imh = ax.pcolormesh(sema, incl, nu_d)
+    ax.set_xlabel('Sem.mj.ax [m]')
+    ax.set_ylabel('Inclination [deg]')
+    ax.set_title('Mean anomaly [deg] asc. sol')
+    plt.colorbar(imh, ax=ax, fraction=0.04, pad=0.01)
+    ax.contour(sema, incl, theta_d, [1, 2, 5, 10], cmap='inferno_r')
+
+    fh.suptitle(plot_title)
 
 
 def build_map(station, ii, kk, azim=None, elev=None):
@@ -643,7 +745,7 @@ def build_map(station, ii, kk, azim=None, elev=None):
 
     # Values of dimension axis for orbit semimajor axis
     if np.issubdtype(type(kk), int):
-        sema = 1000 * (6371 + np.linspace(300, 3000, 20))
+        sema = 1000 * (Re_km + np.linspace(300, 3000, 20))
         a = sema[kk]
     else:
         a = kk
@@ -680,7 +782,7 @@ def build_map(station, ii, kk, azim=None, elev=None):
     angle = np.degrees(get_off_axis_angle(station, ecef, k_ecef))
     r, rdot = get_range_and_range_rate(station, ecef)
 
-    print(f"inclination: {inci}, semimajor axis {a:.0f}m (altitude {a/1000 - 6371:.1f} km)")
+    print(f"inclination: {inci}, semimajor axis {a:.0f}m (altitude {a/1000 - Re_km:.1f} km)")
 
     return states, ecef, angle, r, rdot
 
@@ -755,5 +857,85 @@ def main():
         do_create_demoplots()
 
 
+if __name__ == '__other_main__':
+    import sys
+
+    if len(sys.argv) > 1:
+        cachefilename = sys.argv[1]
+    else:
+        cachefilename = 'cache/eiscat_esr/az185.5_el82.1.h5'
+
+    ii = int(sys.argv[2]) if len(sys.argv) > 2 else 0
+    kk = int(sys.argv[3]) if len(sys.argv) > 3 else 0
+
+    cpath = Path(cachefilename)
+    radar_name = cpath.parts[cpath.parts.index('cache') + 1]
+    radar = getattr(sorts.radar.instances, radar_name)
+    station = radar.tx[0]
+
+    with h5py.File(cachefilename, 'r') as ds:
+
+        incl = ds['incl'][:]
+        sema = ds['sema'][:]
+
+        azim = ds['azimuth'][()]
+        elev = ds['elevation'][()]
+
+        Om_a = ds['Om_a'][ii][kk]
+        Om_d = ds['Om_d'][ii][kk]
+
+        nu_a = ds['nu_a'][ii][kk]
+        nu_d = ds['nu_d'][ii][kk]
+
+        r_a = ds['r_a'][ii][kk]
+        r_d = ds['r_d'][ii][kk]
+
+        rdot_a = ds['rdot_a'][ii][kk]
+        rdot_d = ds['rdot_d'][ii][kk]
+
+    inci = incl[ii]
+    a = sema[kk]
+
+    print(f"inclination: {inci}, semimajor axis {a:.0f}m (altitude {a/1000 - Re_km:.1f} km)")
+    print(f"ascending  range {r_a/1000:.1f} km, range rate {rdot_a/1000:.3f} km/s")
+    print(f"descending range {r_d/1000:.1f} km, range rate {rdot_d/1000:.3f} km/s")
+
+    # Epoch of observation
+    epoch = Time("2000-01-01T00:10:00Z", format='isot')
+
+    shape = 101, 103
+    nux = np.linspace(0, 360, shape[0])
+    Omx = np.linspace(0, 360, shape[1])
+
+    station.beam.sph_point(azim, elev, radians=False)
+    k_ecef = station.pointing_ecef
+
+    anom, Omega = np.meshgrid(nux, Omx, indexing='ij')
+    anom.shape = -1             # unravel
+    Omega.shape = -1
+
+    orbit = pyorb.Orbit(
+        M0 = pyorb.M_earth,
+        degrees = True,
+        a = sema[0],
+        e = 0,
+        i = 0,
+        omega = 0,
+        Omega = Omega,
+        anom = anom,
+        num = anom.size,
+        type = 'mean',
+    )
+
+    orbit.i = inci
+    orbit.a = a
+
+    # maps
+    states = orbit.cartesian
+    ecef = sorts.frames.convert(epoch, states, in_frame='GCRS', out_frame='ITRS')
+    angle = np.degrees(get_off_axis_angle(station, ecef, k_ecef))
+    r, rdot = get_range_and_range_rate(station, ecef)
+
 if __name__ == '__main__':
     main()
+
