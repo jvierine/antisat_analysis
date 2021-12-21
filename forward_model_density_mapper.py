@@ -146,6 +146,7 @@ class ForwardModel(sorts.Simulation):
     @sorts.cached_step(caches='npy')
     def simulate(self, index, item, **kwargs):
         obj = self.population.get_object(item)
+        obj.propagator.set(TEME_TO_TLE_minimize_start_samples=10)
 
         t = np.arange(
             self.config.getfloat('General', 'start_time_hours')*3600.0, 
@@ -335,22 +336,27 @@ def distribution_gui(data, pop, config):
     l1, = axes[0].plot([], [], '.b')
     axes[0].set_xlabel('Range [km]')
     axes[0].set_ylabel('Range-rate [km/s]')
-    axes[0].set_xlim([data['range'].min()*1e-3, data['range'].max()*1e-3])
-    axes[0].set_ylim([data['range_rate'].min()*1e-3, data['range_rate'].max()*1e-3])
+
     l2, = axes[1].plot([], [], '.b')
     axes[1].set_xlabel('Time [h]')
     axes[1].set_ylabel('SNR [dB]')
-    axes[1].set_xlim([data['t'].min()/3600.0, data['t'].max()/3600.0])
-    axes[1].set_ylim(np.log10(np.array([data['snr'].min(), data['snr'].max()]))*10)
+
     l3, = axes[2].plot([], [], '.b')
     axes[2].set_xlabel('Time [h]')
     axes[2].set_ylabel('Range [km]')
-    axes[2].set_xlim([data['t'].min()/3600.0, data['t'].max()/3600.0])
-    axes[2].set_ylim([data['range'].min()*1e-3, data['range'].max()*1e-3])
+
     l4, = axes[3].plot([], [], '.b')
     axes[3].set_xlabel('Time [h]')
     axes[3].set_ylabel('Range-rate [km/s]')
+
+    axes[1].set_xlim([data['t'].min()/3600.0, data['t'].max()/3600.0])
+    axes[2].set_xlim([data['t'].min()/3600.0, data['t'].max()/3600.0])
     axes[3].set_xlim([data['t'].min()/3600.0, data['t'].max()/3600.0])
+
+    axes[0].set_xlim([data['range'].min()*1e-3, data['range'].max()*1e-3])
+    axes[0].set_ylim([data['range_rate'].min()*1e-3, data['range_rate'].max()*1e-3])
+    axes[1].set_ylim(np.log10(np.array([data['snr'].min(), data['snr'].max()]))*10)
+    axes[2].set_ylim([data['range'].min()*1e-3, data['range'].max()*1e-3])
     axes[3].set_ylim([data['range_rate'].min()*1e-3, data['range_rate'].max()*1e-3])
 
     axcolor = 'lightgoldenrodyellow'
@@ -360,12 +366,13 @@ def distribution_gui(data, pop, config):
 
     ax_omega = [0.6, 0.05, 0.2, 0.03]
     ax_Omega = [0.6, 0.1, 0.2, 0.03]
+    ax_snr = [0.6, 0.15, 0.2, 0.03]
 
     slider_axis = [ax_a, ax_e, ax_i, ax_omega, ax_Omega]
     slider_names = ['a [AU]', 'e [1]', 'i [deg]', 'aop [deg]', 'raan [deg]']
     data_names = ['a', 'e', 'i', 'aop', 'raan']
 
-    sample_vectors = get_sample_vectors(config)
+    sample_vectors = get_sample_vectors(config)[:-1]  # remove nu
 
     sliders = []
     for ax_size, sname, x, key in zip(slider_axis, slider_names, sample_vectors, data_names):
@@ -376,7 +383,12 @@ def distribution_gui(data, pop, config):
         slide = Slider(sax, sname, x.min(), x.max(), valinit=x.min(), valstep=x)
         sliders.append((slide, key))
 
-    def update(val, draw=True):
+    snr_db = 10*np.log10(data['snr'])
+
+    s_ax_snr = plt.axes(ax_snr, facecolor=axcolor)
+    slide_snr = Slider(s_ax_snr, 'Min SNR [dB]', snr_db.min(), snr_db.max(), valinit=snr_db.min(), valstep=1.0)
+
+    def update(val, draw=True, lim_update=False):
 
         select = np.full(data['range'].shape, True, dtype=bool)
         for slide, key in sliders:
@@ -384,6 +396,13 @@ def distribution_gui(data, pop, config):
                 select,
                 pop[key][data['oid']] == slide.val,
             )
+
+        select = np.logical_and(
+            select,
+            snr_db >= slide_snr.val,
+        )
+
+        # print(pop.data[np.unique(data['oid'][select])])
 
         l1.set_xdata(data['range'][select]*1e-3)
         l1.set_ydata(data['range_rate'][select]*1e-3)
@@ -397,11 +416,19 @@ def distribution_gui(data, pop, config):
         l4.set_xdata(data['t'][select]/3600.0)
         l4.set_ydata(data['range_rate'][select]*1e-3)
 
+        if lim_update:
+            axes[0].set_xlim([data['range'][select].min()*1e-3, data['range'][select].max()*1e-3])
+            axes[0].set_ylim([data['range_rate'][select].min()*1e-3, data['range_rate'][select].max()*1e-3])
+            axes[1].set_ylim(np.log10(np.array([data['snr'][select].min(), data['snr'][select].max()]))*10)
+            axes[2].set_ylim([data['range'][select].min()*1e-3, data['range'][select].max()*1e-3])
+            axes[3].set_ylim([data['range_rate'][select].min()*1e-3, data['range_rate'][select].max()*1e-3])
+
         if draw:
             fig.canvas.draw_idle()
 
     for slide, key in sliders:
         slide.on_changed(update)
+    slide_snr.on_changed(update)
 
     update(None, draw=False)
 
@@ -416,7 +443,7 @@ def analysis(config, pop):
 
     data = np.load(data_path)
 
-    print(data.shape)
+    print(f'Data shape = {data.shape}')
 
     bins = 30
     # cols = ['oid', 't', 'range', 'range_rate', 'snr']
@@ -430,6 +457,16 @@ def analysis(config, pop):
     ax.set_ylabel('Frequency [1]')
 
     gui_fig, gui_axes = distribution_gui(data, pop, config)
+
+    # sample_vectors = get_sample_vectors(config)
+    # used_vectors = [x for x in sample_vectors if x.max() > x.min()]
+
+    # fig, axes = plt.subplots(len(used_vectors), len(used_vectors))
+    # for ix, x in enumerate(used_vectors):
+    #     for iy, y in enumerate(used_vectors):
+    #         if ix == iy:
+    #             axes[ix, iy].hist()
+    #         else:
 
     fig, ax = plt.subplots(1, 1)
     ax.hist2d(data['range']*1e-3, data['range_rate']*1e-3, bins=bins)
