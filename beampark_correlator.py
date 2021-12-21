@@ -73,27 +73,35 @@ def save_correlation_data(output_pth, indecies, metric, correlation_data, meta=N
             for key in meta:
                 ds.attrs[key] = meta[key]
 
-        ds['obj_ind'] = np.array(list(correlation_data.keys()))
-        ds_obj_ind = ds['obj_ind']
+        ds['object_index'] = np.array(list(correlation_data.keys()))
+        ds_obj_ind = ds['object_index']
         ds_obj_ind.make_scale('object_index')
-        ds_obj_ind.attrs['long_name'] = 'object population index'
+        ds_obj_ind.attrs['long_name'] = 'Object index in the used population'
 
-        cartesian = ds.create_dataset(
-            "axis",
+        cartesian_pos = ds.create_dataset(
+            "cartesian_pos_axis",
             data=[s.encode() for s in ["x", "y", "z"]],
         )
-        cartesian.make_scale('cartesian_axis')
-        cartesian.attrs['long_name'] = 'cartesian axis names'
+        cartesian_pos.make_scale('cartesian_pos_axis')
+        cartesian_pos.attrs['long_name'] = 'Cartesian position axis names'
+        # FIX this
 
-        ds['mch_ind'] = match_index
-        ds_mch_ind = ds['mch_ind']
-        ds_mch_ind.make_scale('match_index')
-        ds_mch_ind.attrs['long_name'] = 'nth best matching index'
+        cartesian_vel = ds.create_dataset(
+            "cartesian_vel_axis",
+            data=[s.encode() for s in ["vx", "vy", "vz"]],
+        )
+        cartesian_vel.make_scale('cartesian_vel_axis')
+        cartesian_vel.attrs['long_name'] = 'Cartesian velocity axis names'
 
-        ds['obs_ind'] = observation_index
-        ds_obs_ind = ds['obs_ind']
+        ds['maching_rank'] = match_index
+        ds_mch_ind = ds['maching_rank']
+        ds_mch_ind.make_scale('maching_rank')
+        ds_mch_ind.attrs['long_name'] = 'Matching rank numbering from best as lowest rank to worst at hightest rank'
+
+        ds['observation_index'] = observation_index
+        ds_obs_ind = ds['observation_index']
         ds_obs_ind.make_scale('observation_index')
-        ds_obs_ind.attrs['long_name'] = 'radar observation index'
+        ds_obs_ind.attrs['long_name'] = 'Observation index in the input radar data'
 
         def _create_ia_var(base, name, long_name, data, scales, units=None):
             base[name] = data.copy()
@@ -105,20 +113,36 @@ def save_correlation_data(output_pth, indecies, metric, correlation_data, meta=N
                 var.attrs['units'] = units
 
         scales = [ds_mch_ind, ds_obs_ind]
-        _create_ia_var(ds, 'match_oid', 'Matched object id in the used population', indecies, scales)
-        _create_ia_var(ds, 'match_metric', 'Matching metric values for the object', metric, scales)
+
+        _create_ia_var(ds, 'matched_object_index', 'Index of the correlated object', indecies, scales)
+        _create_ia_var(ds, 'matched_object_metric', 'Correlation metric for the correlated object', metric, scales)
 
         # We currently only supply one dat dict to the correlator
         measurement_set_index = 0
 
-        def stacker(x, key):
-            return np.stack([val[measurement_set_index][key] for _, val in x.items()], axis=0)
+        def stacker(x, key, slicer=slice(None)):
+            return np.stack([val[measurement_set_index][key][slicer,...] for _, val in x.items()], axis=0)
 
         scales = [ds_obj_ind, ds_obs_ind]
-        _create_ia_var(ds, 'r_sim', 'simulated range', stacker(correlation_data, 'r_ref'), scales, units='m')
-        _create_ia_var(ds, 'v_sim', 'simulated range rate', stacker(correlation_data, 'v_ref'), scales, units='m/s')
-        _create_ia_var(ds, 'match_sim', 'calculated metric', stacker(correlation_data, 'match'), scales)
-        _create_ia_var(ds, 'states', 'simulated states', stacker(correlation_data, 'states'), scales + [cartesian])
+        _create_ia_var(ds, 'simulated_range', 'Simulated range', stacker(correlation_data, 'r_ref'), scales, units='m')
+        _create_ia_var(ds, 'simulated_range_rate', 'Simulated range rate', stacker(correlation_data, 'v_ref'), scales, units='m/s')
+        _create_ia_var(ds, 'simulated_correlation_metric', 'Calculated metric for the simulated ITRS state', stacker(correlation_data, 'match'), scales)
+        _create_ia_var(
+            ds, 
+            'simulated_position', 
+            'Simulated ITRS positions', 
+            np.stack([val[measurement_set_index]['states'][:3,...].T for _, val in correlation_data.items()], axis=0),
+            scales + [cartesian_pos],
+            units='m',
+        )
+        _create_ia_var(
+            ds, 
+            'simulated_velocity', 
+            'Simulated ITRS velocities', 
+            np.stack([val[measurement_set_index]['states'][3:,...].T for _, val in correlation_data.items()], axis=0),
+            scales + [cartesian_vel],
+            units='m/s',
+        )
 
 
 def run():
