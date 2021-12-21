@@ -107,8 +107,6 @@ class ForwardModel(sorts.Simulation):
         self.epoch = Time(config.get('General', 'epoch'), format='isot')
         self.inds = list(range(len(population)))
 
-        self.inds = self.inds[:500]
-
         super().__init__(*args, **kwargs)
 
         if self.logger is not None:
