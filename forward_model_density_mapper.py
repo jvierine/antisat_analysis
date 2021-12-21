@@ -41,6 +41,7 @@ DEFAULT_CONFIG = {
         'time_slice_separation_sec': 0.1,
         'propagator': 'SGP4',
         'propagation_time_step_sec': 20.0,
+        'TEME_TO_TLE_minimize_start_samples': 20, 
     },
     'Cache': {
         'output_folder': None,
@@ -146,7 +147,8 @@ class ForwardModel(sorts.Simulation):
     @sorts.cached_step(caches='npy')
     def simulate(self, index, item, **kwargs):
         obj = self.population.get_object(item)
-        obj.propagator.set(TEME_TO_TLE_minimize_start_samples=10)
+        _tle_samps = self.config.getint('General', 'TEME_TO_TLE_minimize_start_samples')
+        obj.propagator.set(TEME_TO_TLE_minimize_start_samples=_tle_samps)
 
         t = np.arange(
             self.config.getfloat('General', 'start_time_hours')*3600.0, 
