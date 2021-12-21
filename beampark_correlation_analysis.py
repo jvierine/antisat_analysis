@@ -99,8 +99,8 @@ if __name__ == '__main__':
         # with open(input_pth, 'rb') as fh:
         #     indecies, metric, cdat = pickle.load(fh)
         with h5py.File(input_pth, 'r') as ds:
-            indecies = ds['match_oid'][()]
-            metric = ds['match_metric'][()]
+            indecies = ds['matched_object_index'][()]
+            metric = ds['matched_object_metric'][()]
             name = ds.attrs['radar_name']
 
         x = metric['dr']*1e-3
@@ -114,7 +114,7 @@ if __name__ == '__main__':
         ax.plot([0, 0], [y.min(), y.max()], '-r')
         ax.plot([x.min(), x.max()], [0, 0], '-r')
 
-        draw_ellipse(1.0, 0.02, ax)
+        draw_ellipse(1.0, 0.2, ax)
 
         ax.set_xlabel('Range residuals [km]')
         ax.set_ylabel('Range-rate residuals [km/s]')

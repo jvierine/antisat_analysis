@@ -120,8 +120,8 @@ def save_correlation_data(output_pth, indecies, metric, correlation_data, meta=N
         # We currently only supply one dat dict to the correlator
         measurement_set_index = 0
 
-        def stacker(x, key, slicer=slice(None)):
-            return np.stack([val[measurement_set_index][key][slicer,...] for _, val in x.items()], axis=0)
+        def stacker(x, key):
+            return np.stack([val[measurement_set_index][key] for _, val in x.items()], axis=0)
 
         scales = [ds_obj_ind, ds_obs_ind]
         _create_ia_var(ds, 'simulated_range', 'Simulated range', stacker(correlation_data, 'r_ref'), scales, units='m')
@@ -131,7 +131,7 @@ def save_correlation_data(output_pth, indecies, metric, correlation_data, meta=N
             ds, 
             'simulated_position', 
             'Simulated ITRS positions', 
-            np.stack([val[measurement_set_index]['states'][:3,...].T for _, val in correlation_data.items()], axis=0),
+            np.stack([val[measurement_set_index]['states'][:3, ...].T for _, val in correlation_data.items()], axis=0),
             scales + [cartesian_pos],
             units='m',
         )
@@ -139,7 +139,7 @@ def save_correlation_data(output_pth, indecies, metric, correlation_data, meta=N
             ds, 
             'simulated_velocity', 
             'Simulated ITRS velocities', 
-            np.stack([val[measurement_set_index]['states'][3:,...].T for _, val in correlation_data.items()], axis=0),
+            np.stack([val[measurement_set_index]['states'][3:, ...].T for _, val in correlation_data.items()], axis=0),
             scales + [cartesian_vel],
             units='m/s',
         )
