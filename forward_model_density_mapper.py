@@ -11,6 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
 import scipy.interpolate as sio
+import scipy.stats as st
 from matplotlib import cm
 from astropy.time import Time, TimeDelta
 import h5py
@@ -65,6 +66,9 @@ DEFAULT_CONFIG = {
         'raan_samples': 1,
         'orbit_samples': 100,
         'diam': 0.1,
+    },
+    'Measurements': {
+
     },
 }
 
@@ -270,9 +274,6 @@ def generate_population(config):
 
     d = config.getfloat('Population', 'diam')
 
-    # For consistency
-    np.random.seed(config.getint('General', 'seed'))
-
     # * 0: oid - Object ID
     # * 1: a - Semi-major axis in m
     # * 2: e - Eccentricity 
@@ -439,7 +440,112 @@ def distribution_gui(data, pop, config):
     return fig, axes
 
 
-def analysis(config, pop):
+def snr_gui(data, pop, config, radar):
+
+    fig = plt.figure()
+    axes = [
+        fig.add_subplot(2, 1, 1),
+        fig.add_subplot(2, 2, 3),
+        fig.add_subplot(2, 2, 4),
+    ]
+    plt.subplots_adjust(bottom=0.12)
+
+    xedges = np.linspace(data['t'].min()/3600.0, data['t'].max()/3600.0, 100)
+    yedges = np.linspace(-100, 250, 100)
+    xedges_p = (xedges[:-1] + xedges[1:])*0.5
+    yedges_p = (yedges[:-1] + yedges[1:])*0.5
+
+    H, _, _ = np.histogram2d(data['t']/3600.0, 10.0*np.log10(data['snr']), bins=[xedges, yedges])
+
+    X, Y = np.meshgrid(xedges_p, yedges_p)
+
+    # l1, = axes[0].plot([], [], '.b')
+    pmesh = axes[0].pcolormesh(X, Y, H.T)
+    # cb = plt.colorbar(pmesh)
+    axes[0].set_xlabel('Time [h]')
+    axes[0].set_ylabel('SNR [dB]')
+
+    l2, = axes[1].plot([], [], '-')
+    axes[1].set_xlabel('SNR [dB]')
+    axes[1].set_ylabel('Frequency [1]')
+
+    l3a, = axes[2].plot([], [], '-b')
+    l3b, = axes[2].plot([], [], '-r')
+    axes[2].set_xlabel('Diameter [log10(m)]')
+    axes[2].set_ylabel('Probabilitiy [1]')
+
+    axes[0].set_xlim([xedges[0], xedges[-1]])
+    axes[0].set_ylim([yedges[0], yedges[-1]])
+    axes[2].set_xlim([-2, 1])
+
+    axcolor = 'lightgoldenrodyellow'
+    pos_ax_mu = [0.25, 0.05, 0.2, 0.03]
+    ax_mu = plt.axes(pos_ax_mu, facecolor=axcolor)
+    pos_ax_sig = [0.6, 0.05, 0.2, 0.03]
+    ax_sig = plt.axes(pos_ax_sig, facecolor=axcolor)
+
+    slide_mu = Slider(ax_mu, 'Mean', -2.0, 0.0, valinit=-1.0, valstep=0.1)
+    slide_std = Slider(ax_sig, 'Std', 0.01, 1, valinit=0.1, valstep=0.01)
+
+    log10_d = np.linspace(-5, 2, 200)
+
+    objs = np.unique(data['oid'])
+    oid_to_data = np.empty(data['snr'].shape, dtype=np.int64)
+    for ind in range(len(data['oid'])):
+        oid_to_data[ind] = np.argwhere(objs == data['oid'][ind])
+
+    # Just random sample once
+    xi_samps = np.random.randn(len(objs))
+
+    def update(val, draw=True):
+
+        log10_d_P = st.norm.pdf(log10_d, scale=slide_std.val, loc=slide_mu.val)
+        sample_d = 10.0**(xi_samps*slide_std.val + slide_mu.val)
+        samp_F, samp_X = np.histogram(np.log10(sample_d), bins=100, density=True)
+        samp_X = (samp_X[:-1] + samp_X[1:])*0.5
+
+        scaling = np.empty_like(sample_d)
+        for ind in range(len(sample_d)):
+            scaling[ind] = sorts.signals.hard_target_snr_scaling(pop['d'][objs][ind], sample_d[ind], radar.tx[0].wavelength)
+        new_snr = 10.0*np.log10(data['snr']*scaling[oid_to_data])
+
+        snr_F, snr_X = np.histogram(new_snr, bins=100)
+        snr_X = (snr_X[:-1] + snr_X[1:])*0.5
+
+        # l1.set_xdata(data['t']/3600.0)
+        # l1.set_ydata(new_snr)
+        H, _, _ = np.histogram2d(data['t']/3600.0, new_snr, bins=[xedges, yedges])
+        pmesh.update({'array': H.T.ravel()})
+
+        l2.set_xdata(snr_X)
+        l2.set_ydata(snr_F)
+
+        l3a.set_xdata(samp_X)
+        l3a.set_ydata(samp_F)
+
+        l3b.set_xdata(log10_d)
+        l3b.set_ydata(log10_d_P)
+
+        axes[1].set_xlim([snr_X.min(), snr_X.max()])
+        axes[1].set_ylim([snr_F.min(), snr_F.max()])
+
+        axes[2].set_xlim([np.append(samp_X, log10_d).min(), np.append(samp_X, log10_d).max()])
+        axes[2].set_ylim([np.append(samp_F, log10_d_P).min(), np.append(samp_F, log10_d_P).max()])
+
+        if draw:
+            fig.canvas.draw_idle()
+
+    slide_mu.on_changed(update)
+    slide_std.on_changed(update)
+
+    update(None, draw=False)
+
+    plt.show()
+
+    return fig, axes
+
+
+def explore(config, pop, radar):
     base_path = pathlib.Path(config.get('Cache', 'output_folder'))
     data_path = base_path / 'simulation' / 'master' / 'collected_results.npy'
 
@@ -448,27 +554,19 @@ def analysis(config, pop):
     print(f'Data shape = {data.shape}')
 
     bins = 30
-    # cols = ['oid', 't', 'range', 'range_rate', 'snr']
-
-    # ['oid', 'm', 'd', 'A', 'C_R', 'C_D'],
-    # ['a', 'e', 'i', 'raan', 'aop', 'mu0']
 
     fig, ax = plt.subplots(1, 1)
     ax.hist(np.log10(pop['d']))
     ax.set_xlabel('Diameter [log10(m)]')
     ax.set_ylabel('Frequency [1]')
 
+    gui_fig_sn, gui_axes_sn = snr_gui(data, pop, config, radar)
+
     gui_fig, gui_axes = distribution_gui(data, pop, config)
 
-    # sample_vectors = get_sample_vectors(config)
-    # used_vectors = [x for x in sample_vectors if x.max() > x.min()]
+    a, e, inc, aop, raan, nu = get_sample_vectors(config)
 
-    # fig, axes = plt.subplots(len(used_vectors), len(used_vectors))
-    # for ix, x in enumerate(used_vectors):
-    #     for iy, y in enumerate(used_vectors):
-    #         if ix == iy:
-    #             axes[ix, iy].hist()
-    #         else:
+    sample_vectors = get_sample_vectors(config)
 
     fig, ax = plt.subplots(1, 1)
     ax.hist2d(data['range']*1e-3, data['range_rate']*1e-3, bins=bins)
@@ -476,19 +574,19 @@ def analysis(config, pop):
     ax.set_ylabel('Range rate [km/s]')
 
     fig, axes = plt.subplots(2, 2)
-    axes[0, 0].hist2d(pop['i'][data['oid']], data['t']/3600.0, bins=bins)
+    axes[0, 0].hist2d(pop['i'][data['oid']], data['t']/3600.0, bins=[len(inc), bins])
     axes[0, 0].set_xlabel('Inclination [deg]')
     axes[0, 0].set_ylabel('Time [h]')
 
-    axes[0, 1].hist2d(pop['i'][data['oid']], data['range']*1e-3, bins=bins)
+    axes[0, 1].hist2d(pop['i'][data['oid']], data['range']*1e-3, bins=[len(inc), bins])
     axes[0, 1].set_xlabel('Inclination [deg]')
     axes[0, 1].set_ylabel('Range [km]')
 
-    axes[1, 0].hist2d(pop['i'][data['oid']], data['range_rate']*1e-3, bins=bins)
+    axes[1, 0].hist2d(pop['i'][data['oid']], data['range_rate']*1e-3, bins=[len(inc), bins])
     axes[1, 0].set_xlabel('Inclination [deg]')
     axes[1, 0].set_ylabel('Range rate [km/s]')
 
-    axes[1, 1].hist2d(pop['i'][data['oid']], 10*np.log(data['snr']), bins=bins)
+    axes[1, 1].hist2d(pop['i'][data['oid']], 10*np.log(data['snr']), bins=[len(inc), bins])
     axes[1, 1].set_xlabel('Inclination [deg]')
     axes[1, 1].set_ylabel('SNR [dB]')
 
@@ -522,7 +620,7 @@ def main():
     parser.add_argument('config', type=pathlib.Path, help='Path to config')
     parser.add_argument(
         'action',
-        choices=['run', 'collect', 'analyse'],
+        choices=['run', 'collect', 'explore', 'invert'],
         default='run',
         const='run',
         nargs='?',
@@ -546,6 +644,9 @@ def main():
         exit()
     else:
         config = get_config(args.config)
+
+    # For consistency
+    np.random.seed(config.getint('General', 'seed'))
 
     radar = getattr(sorts.radars, config.get('General', 'radar'))
     logger.info('Using radar: {}'.format(config.get('General', 'radar')))
@@ -591,8 +692,10 @@ def main():
         sim.run(step='simulate')
     elif args.action == 'collect':
         sim.run(step='collect')
-    elif args.action == 'analyse':
-        analysis(config, population)
+    elif args.action == 'explore':
+        explore(config, population, radar)
+    elif args.action == 'invert':
+        invert(config, population, radar)
 
     sim.profiler.stop('total')
     print(sim.profiler.fmt(normalize='total'))
