@@ -153,7 +153,7 @@ if __name__ == '__main__':
     axes[1].set_ylim([-scale_y, scale_y])
 
     if out_path is not None:
-        fig.savefig(f'{input_pth.stem}_residuals.png')
+        fig.savefig(out_path / f'{name}_residuals.png')
 
     elip_dst = np.sqrt((x/1.0)**2 + (y/0.2)**2)
     log10_elip_dst = np.log10(elip_dst[np.logical_not(np.isnan(elip_dst))])
@@ -167,7 +167,7 @@ if __name__ == '__main__':
     ax.set_title(name)
 
     if out_path is not None:
-        fig.savefig(f'{input_pth.stem}_ellipse_distance.png')
+        fig.savefig(out_path / f'{name}_ellipse_distance.png')
 
     select = np.logical_and(
         elip_dst < 1.0,
@@ -193,7 +193,7 @@ if __name__ == '__main__':
     ax.set_xlabel('Time [h]')
 
     if out_path is not None:
-        fig.savefig(f'{input_pth.stem}_rv_t_correlations.png')
+        fig.savefig(out_path / f'{name}_rv_t_correlations.png')
 
     fig, ax = plt.subplots(1, 1, figsize=(15, 15))
     ax.plot(r[select], v[select], '.r', label='Correlated')
@@ -204,6 +204,6 @@ if __name__ == '__main__':
     ax.set_title(name)
 
     if out_path is not None:
-        fig.savefig(f'{input_pth.stem}_rv_correlations.png')
+        fig.savefig(out_path / f'{name}_rv_correlations.png')
 
     plt.show()
