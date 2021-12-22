@@ -155,7 +155,7 @@ if __name__ == '__main__':
     if out_path is not None:
         fig.savefig(out_path / f'{name}_residuals.png')
 
-    elip_dst = np.sqrt((x/1.0)**2 + (y/0.2)**2)
+    elip_dst = np.sqrt((x/scale_x)**2 + (y/scale_y)**2)
     log10_elip_dst = np.log10(elip_dst[np.logical_not(np.isnan(elip_dst))])
 
     fig, ax = plt.subplots(1, 1, figsize=(15, 15))
