@@ -54,10 +54,10 @@ def vector_diff_metric_std_normalized(t, r, v, r_ref, v_ref, **kwargs):
     return ret
 
 
-def sorting_function(metric):
+def sorting_function(metric, dr_scale, dv_scale):
     '''How to sort the matches using a weight between range and range rate.
     '''
-    P = np.sqrt(metric['dr']**2 + 1e3*metric['dv']**2)
+    P = np.sqrt((metric['dr']/dr_scale)**2 + (metric['dv']/dv_scale)**2)
     return np.argsort(P, axis=0)
 
 
@@ -159,8 +159,13 @@ def run():
     parser.add_argument('output', type=str, help='Results output location')
     parser.add_argument('-c', '--clobber', action='store_true', help='Override output location if it exists')
     parser.add_argument('--std', action='store_true', help='Use measurement errors')
+    parser.add_argument('--range-rate-scaling', default=0.2, type=float, help='Scaling used on range rate in the sorting function of the correlator')
+    parser.add_argument('--range-scaling', default=1.0, type=float, help='Scaling used on range in the sorting function of the correlator')
 
     args = parser.parse_args()
+
+    s_dr = args.range_rate_scaling
+    s_r = args.range_scaling
 
     if args.std:
         metric = vector_diff_metric_std_normalized
@@ -264,7 +269,7 @@ def run():
             n_closest = 1,
             meta_variables = meta_vars,
             metric = metric, 
-            sorting_function = sorting_function,
+            sorting_function = lambda x: sorting_function(x, s_r, s_dr),
             metric_dtype = [('dr', np.float64), ('dv', np.float64)],
             metric_reduce = None,
             scalar_metric = False,
@@ -285,7 +290,8 @@ def run():
                     rx_lat = radar.rx[0].lat,
                     rx_lon = radar.rx[0].lon,
                     rx_alt = radar.rx[0].alt,
-
+                    range_scaling = s_r,
+                    range_rate_scaling = s_dr,
                 ),
             )
 

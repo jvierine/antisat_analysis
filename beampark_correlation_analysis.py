@@ -76,10 +76,14 @@ def plot_correlation_residuals(observed_data, simulated_data, axes=None):
     return fig, axes
 
 
-def draw_ellipse(x_size, y_size, ax, res=100, style='-r'):
+def draw_ellipse(x_size, y_size, ax, res=100, style='-r', log=False):
     th = np.linspace(0, np.pi*2, res)
     ex = np.cos(th)*x_size
     ey = np.sin(th)*y_size
+
+    if log:
+        ex = np.log10(np.abs(ex))
+        ey = np.log10(np.abs(ey))
 
     ax.plot(ex, ey, style)
     return ax
@@ -88,40 +92,118 @@ def draw_ellipse(x_size, y_size, ax, res=100, style='-r'):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Analyse beampark correlation for a beampark')
-    parser.add_argument('input', type=str, nargs='+', help='Input correlation data')
+    parser.add_argument('input', type=str, help='Input correlation data')
+    parser.add_argument('measurements', type=str, help='Input measurement data')
+    parser.add_argument('--output', type=str, default='', help='Output folder for plots')
 
     args = parser.parse_args()
 
-    for arg_input in args.input:
+    arg_input = args.input
+    meas_file = args.measurements
 
-        input_pth = pathlib.Path(arg_input).resolve()
+    scale_x = 1.0
+    scale_y = 0.2
 
-        # with open(input_pth, 'rb') as fh:
-        #     indecies, metric, cdat = pickle.load(fh)
-        with h5py.File(input_pth, 'r') as ds:
-            indecies = ds['matched_object_index'][()]
-            metric = ds['matched_object_metric'][()]
-            name = ds.attrs['radar_name']
+    if len(args.output) > 0:
+        out_path = pathlib.Path(args.output).resolve()
+        out_path.mkdir(exist_ok=True)
+    else:
+        out_path = None
 
-        x = metric['dr']*1e-3
-        y = metric['dv']*1e-3
-        inds = np.logical_not(np.logical_or(np.isnan(x), np.isnan(y)))
-        x = x[inds]
-        y = y[inds]
+    input_pth = pathlib.Path(arg_input).resolve()
+    input_meas_pth = pathlib.Path(meas_file).resolve()
 
-        fig, ax = plt.subplots(1, 1, figsize=(15, 15))
-        ax.plot(x, y, '.b')
-        ax.plot([0, 0], [y.min(), y.max()], '-r')
-        ax.plot([x.min(), x.max()], [0, 0], '-r')
+    print('Loading monostatic measurements')
+    with h5py.File(str(input_meas_pth), 'r') as h_det:
+        r = h_det['r'][()]
+        t = h_det['t'][()] # Unix seconds
+        v = h_det['v'][()]
 
-        draw_ellipse(1.0, 0.2, ax)
+        inds = np.argsort(t)
+
+        t = t[inds] - t.min()
+        r = r[inds]
+        v = v[inds]
+
+    with h5py.File(input_pth, 'r') as ds:
+        indecies = ds['matched_object_index'][()]
+        metric = ds['matched_object_metric'][()]
+        name = ds.attrs['radar_name']
+
+    x = metric['dr']*1e-3
+    y = metric['dv']*1e-3
+    inds = np.logical_not(np.logical_or(np.isnan(x), np.isnan(y)))
+    xp = x[inds]
+    yp = y[inds]
+
+    fig, axes = plt.subplots(1, 2, figsize=(15, 15))
+
+    for ax in axes:
+        ax.plot(xp, yp, '.b')
+        ax.plot([0, 0], [yp.min(), yp.max()], '-r')
+        ax.plot([xp.min(), xp.max()], [0, 0], '-r')
+
+        draw_ellipse(scale_x, scale_y, ax)
 
         ax.set_xlabel('Range residuals [km]')
         ax.set_ylabel('Range-rate residuals [km/s]')
         ax.set_title(name)
 
-    # fig, axes = plt.subplots(2, 3, figsize=(15, 15))
-    # plot_measurement_data(dat, cdat[0][0], axes=axes[:, 0],)
-    # plot_correlation_residuals(dat, cdat[0][0], axes=axes[:, 1:])
+    axes[1].set_xlim([-scale_x, scale_x])
+    axes[1].set_ylim([-scale_y, scale_y])
+
+    if out_path is not None:
+        fig.savefig(f'{input_pth.stem}_residuals.png')
+
+    elip_dst = np.sqrt((x/1.0)**2 + (y/0.2)**2)
+    log10_elip_dst = np.log10(elip_dst[np.logical_not(np.isnan(elip_dst))])
+
+    fig, ax = plt.subplots(1, 1, figsize=(15, 15))
+    ax.hist(log10_elip_dst, 100)
+    ax.plot([1, 1], ax.get_ylim(), '-r')
+
+    ax.set_xlabel('Elliptical compound residual [log10(1)]')
+    ax.set_ylabel('Frequency [1]')
+    ax.set_title(name)
+
+    if out_path is not None:
+        fig.savefig(f'{input_pth.stem}_ellipse_distance.png')
+
+    select = np.logical_and(
+        elip_dst < 1.0,
+        np.logical_not(np.isnan(elip_dst)),
+    ).flatten()
+    not_select = np.logical_not(select)
+
+    fig, axes = plt.subplots(2, 1, figsize=(15, 15))
+
+    ax = axes[0]
+    ax.plot(t[select]/3600.0, r[select], '.r', label='Correlated')
+    ax.plot(t[not_select]/3600.0, r[not_select], '.b', label='Uncorrelated')
+    ax.legend()
+    ax.set_ylabel('Range [km]')
+    ax.set_xlabel('Time [h]')
+    ax.set_title(name)
+
+    ax = axes[1]
+    ax.plot(t[select]/3600.0, v[select], '.r')
+    ax.plot(t[not_select]/3600.0, v[not_select], '.b')
+
+    ax.set_ylabel('Range-rate [km/s]')
+    ax.set_xlabel('Time [h]')
+
+    if out_path is not None:
+        fig.savefig(f'{input_pth.stem}_rv_t_correlations.png')
+
+    fig, ax = plt.subplots(1, 1, figsize=(15, 15))
+    ax.plot(r[select], v[select], '.r', label='Correlated')
+    ax.plot(r[not_select], v[not_select], '.b', label='Uncorrelated')
+    ax.legend()
+    ax.set_xlabel('Range [km]')
+    ax.set_ylabel('Range-rate [km/s]')
+    ax.set_title(name)
+
+    if out_path is not None:
+        fig.savefig(f'{input_pth.stem}_rv_correlations.png')
 
     plt.show()
