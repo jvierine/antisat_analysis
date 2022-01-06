@@ -18,10 +18,22 @@ import sorts
 '''
 Examples:
 
-python beampark_correlator.py eiscat_uhf ~/data/spade/beamparks/uhf/2015.10.22/space-track.tles ~/data/spade/beamparks/uhf/2015.10.22/h5 ~/data/spade/beamparks/uhf/2015.10.22/correlation.pickle
-mpirun -n 6 ./beampark_correlator.py eiscat_uhf ~/data/spade/beamparks/uhf/2015.10.22/space-track.tles ~/data/spade/beamparks/uhf/2015.10.22/h5 ~/data/spade/beamparks/uhf/2015.10.22/correlation.pickle -c
+python beampark_correlator.py eiscat_uhf \
+    ~/data/spade/beamparks/uhf/2015.10.22/space-track.tles \
+    ~/data/spade/beamparks/uhf/2015.10.22/leo.h5 \
+    ~/data/spade/beamparks/uhf/2015.10.22/correlation.pickle
+
+mpirun -n 6 \
+    ./beampark_correlator.py eiscat_uhf \
+    ~/data/spade/beamparks/uhf/2015.10.22/space-track.tles \
+    ~/data/spade/beamparks/uhf/2015.10.22/leo.h5 \
+    ~/data/spade/beamparks/uhf/2015.10.22/correlation.pickle -c
+
 mpirun -n 6 ./beampark_correlator.py eiscat_esr ~/data/spade/beamparks/esr/2021.11.23/{space-track.tles,leo.h5,correlation.h5} -c
 '''
+
+# dtype for residuals
+res_t = np.dtype([('dr', np.float64), ('dv', np.float64)])
 
 try:
     from mpi4py import MPI
@@ -61,12 +73,12 @@ def sorting_function(metric, dr_scale, dv_scale):
     return np.argsort(P, axis=0)
 
 
-def save_correlation_data(output_pth, indecies, metric, correlation_data, meta=None):
+def save_correlation_data(output_pth, indices, metric, correlation_data, meta=None):
     print(f'Saving correlation data to {output_pth}')
     with h5py.File(output_pth, 'w') as ds:
 
-        match_index = np.arange(indecies.shape[0])
-        observation_index = np.arange(indecies.shape[1])
+        match_index = np.arange(indices.shape[0])
+        observation_index = np.arange(indices.shape[1])
 
         # Create global attributes for dataset
         if meta is not None:
@@ -114,7 +126,7 @@ def save_correlation_data(output_pth, indecies, metric, correlation_data, meta=N
 
         scales = [ds_mch_ind, ds_obs_ind]
 
-        _create_ia_var(ds, 'matched_object_index', 'Index of the correlated object', indecies, scales)
+        _create_ia_var(ds, 'matched_object_index', 'Index of the correlated object', indices, scales)
         _create_ia_var(ds, 'matched_object_metric', 'Correlation metric for the correlated object', metric, scales)
 
         # We currently only supply one dat dict to the correlator
@@ -246,6 +258,7 @@ def run():
 
     print('Loading TLE population')
     pop = sorts.population.tle_catalog(tle_pth, cartesian=False)
+    pop.unique()
 
     # correlate requires output in ECEF 
     pop.out_frame = 'ITRS'
@@ -256,14 +269,14 @@ def run():
     if output_pth.is_file() and not args.clobber:
         print('Loading correlation data from cache')
         with open(output_pth, 'rb') as fh:
-            indecies, metric, cdat = pickle.load(fh)
+            indices, metric, cdat = pickle.load(fh)
     else:
         if comm is not None:
             comm.barrier()
 
         MPI = comm is not None and comm.size > 1
 
-        indecies, metric, correlation_data = sorts.correlate(
+        indices, metric, correlation_data = sorts.correlate(
             measurements = measurements,
             population = pop,
             n_closest = 1,
@@ -279,7 +292,7 @@ def run():
         if comm is None or comm.rank == 0:
             save_correlation_data(
                 output_pth, 
-                indecies, 
+                indices, 
                 metric, 
                 correlation_data, 
                 meta = dict(
@@ -297,7 +310,7 @@ def run():
 
     if comm is None or comm.rank == 0:
         print('Individual measurement match metric:')
-        for mind, (ind, dst) in enumerate(zip(indecies.T, metric.T)):
+        for mind, (ind, dst) in enumerate(zip(indices.T, metric.T)):
             print(f'measurement = {mind}')
             for res in range(len(ind)):
                 print(f'-- result rank = {res} | object ind = {ind[res]} | metric = {dst[res]} | obj = {pop["oid"][ind[res]]}')
