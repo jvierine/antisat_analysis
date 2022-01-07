@@ -6,6 +6,8 @@ import scipy as sp
 from matplotlib import pyplot as plt
 plt.style.use('tableau-colorblind10')
 
+from astropy.time import Time
+
 import h5py
 
 import sorts
@@ -78,12 +80,13 @@ cache_dir = Path('../cache')
 site = 'eiscat_uhf'
 date = '2021.11.23'
 kdate = '2021.12.27'    # Date of kosmos-debris catalogue download
+overall_title = 'EISCAT UHF 2021-11-23 Correlations'
 
 datadir = cache_dir / site / date
 kosdir = cache_dir / 'kosmos' / kdate
 
-bcor = h5py.File(datadir / 'correlation.h5', 'r')
-kcor = h5py.File(datadir / 'kosmos-correlation.h5', 'r')
+bcor = h5py.File(datadir / 'new-correlation.h5', 'r')
+kcor = h5py.File(datadir / 'new-kosmos-correlation.h5', 'r')
 obs = h5py.File(datadir / 'leo.h5', 'r')
 bpop = tles.tle_catalog(datadir / 'space-track.tles', cartesian=False)
 kpop = tles.tle_catalog(kosdir / 'space-track-kosmos.tles', cartesian=False)
@@ -131,8 +134,10 @@ for obs_ix in range(n_obs):
     bmval = bcor['matched_object_metric'][0, obs_ix]
     kmval = kcor['matched_object_metric'][0, obs_ix]
 
-    b_err = np.hypot(*bmval)
-    k_err = np.hypot(*kmval)
+    # b_err = np.hypot(*bmval)
+    # k_err = np.hypot(*kmval)
+    b_err = np.hypot(bmval[0]/1000, bmval[1]/10)
+    k_err = np.hypot(kmval[0]/1000, kmval[1]/10)
 
     if np.isnan(b_err) and np.isnan(k_err):
         # uncorrelated
@@ -141,16 +146,18 @@ for obs_ix in range(n_obs):
 
     best = np.nanargmin([b_err, k_err])
 
-    if [b_err, k_err][best] > 1e5:
+    if [b_err, k_err][best] > 100:
         # not well enough correlated to matter
         oix_n.append(obs_ix)
         continue
 
     # best == 0 -> background; best == 1 -> kosmos
     if best == 0:
-        oix_b.append(_find_ix(bcor, obs_ix, bmval))
+        #oix_b.append(_find_ix(bcor, obs_ix, bmval))
+        oix_b.append(obs_ix)
     else:
-        oix_k.append(_find_ix(kcor, obs_ix, kmval))
+        #oix_k.append(_find_ix(kcor, obs_ix, kmval))
+        oix_k.append(obs_ix)
 
 
 obs_t = obs['t'][:]
@@ -158,21 +165,29 @@ ax_t = (obs_t - obs_t[0])/60    # minutes
 obs_v = obs['v'][:]
 obs_r = obs['r'][:]
 
+bcor.close()
+kcor.close()
+obs.close()
+
 t0 = Time(obs_t[0], format='unix').iso
 
 fh, ah = plt.subplots(2,1, sharex='all')
 
-ah[0].plot(ax_t[oix_k], obs_r[oix_k], 'ro', \
-           ax_t[oix_b], obs_r[oix_b], 'bo', \
+ah[0].plot(ax_t[oix_b], obs_r[oix_b], 'bo', \
+           ax_t[oix_k], obs_r[oix_k], 'rd', \
            ax_t[oix_n], obs_r[oix_n], 'kx')
-ah[0].legend{['kosmos', 'background', 'uncorrelated'])
+ah[0].legend(['background', 'kosmos', 'uncorrelated'])
 ah[0].set_ylabel('Range [km]')
+ah[0].set_ylim([300, 2000])
 
-ah[1].plot(ax_t[oix_k], obs_v[oix_k], 'ro', \
-           ax_t[oix_b], obs_v[oix_b], 'bo', \
+ah[1].plot(ax_t[oix_b], obs_v[oix_b], 'bo', \
+           ax_t[oix_k], obs_v[oix_k], 'rd', \
            ax_t[oix_n], obs_v[oix_n], 'kx')
-ah[1].legend{['kosmos', 'background', 'uncorrelated'])
+ah[1].legend(['background', 'kosmos', 'uncorrelated'])
 ah[1].set_ylabel('Velocity [km/s]')
 ah[1].set_xlabel(f'Time [minutes since {t0}]')
+ah[1].set_ylim([-2, 2])
+
+fh.suptitle(overall_title)
 
 
