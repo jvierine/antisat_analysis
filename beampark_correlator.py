@@ -33,7 +33,7 @@ mpirun -n 6 ./beampark_correlator.py eiscat_esr ~/data/spade/beamparks/esr/2021.
 '''
 
 # dtype for residuals
-res_t = np.dtype([('dr', np.float64), ('dv', np.float64)])
+res_t = np.dtype([('dr', np.float64), ('dv', np.float64), ('metric', np.float64)])
 
 try:
     from mpi4py import MPI
@@ -42,35 +42,49 @@ except ImportError:
     comm = None
 
 
+def default_propagation_handling(obj, t, t_measurement_indices, measurements):
+    states = obj.get_state(t)
+    return states
+
+
+def jitter_propagation_handling(obj, t, t_measurement_indices, measurements):
+    t_jitter = np.linspace(-5, 5, num=11)
+    t_get = t[:, None] + t_jitter[None, :]
+
+    ret_shape = t_get.shape
+    t_get.shape = (t_get.size, )
+
+    states = obj.get_state(t_get)
+    states.shape = (6, ) + ret_shape
+
+    return states
+
+
 def vector_diff_metric(t, r, v, r_ref, v_ref, **kwargs):
     '''Return a vector of residuals for range and range rate.
     '''
-    ret = np.empty((len(t),), dtype=[('dr', np.float64), ('dv', np.float64)])
-    ret['dr'] = r_ref - r
-    ret['dv'] = v_ref - v
+    r_std = kwargs.get('r_std', None)
+    v_std = kwargs.get('v_std', None)
+
+    index_tuple = (slice(None), ) + tuple(None for x in range(len(r_ref.shape) - 1))
+
+    base_shape = r_ref.shape
+
+    ret = np.empty(base_shape, dtype=res_t)
+    ret['dr'] = r_ref - r[index_tuple]
+    ret['dv'] = v_ref - v[index_tuple]
+    if r_std is not None:
+        ret['dr'] /= r_std[index_tuple]
+        ret['dv'] /= v_std[index_tuple]
+
+    ret['metric'] = np.sqrt((ret['dr']/kwargs['dr_scale'])**2 + (ret['dv']/kwargs['dv_scale'])**2)
+
+    # Reduce jitter if it exists
+    if len(base_shape) > 1:
+        ret.shape = (base_shape[0], np.prod(base_shape[1:]))
+        ret = ret[np.arange(base_shape[0]), np.argmin(ret['metric'], axis=1)]
+
     return ret
-
-
-def vector_diff_metric_std_normalized(t, r, v, r_ref, v_ref, **kwargs):
-    '''Return a vector of measurnment error scaled residuals for range and range rate.
-    '''
-    r_std = kwargs.get('r_std')
-    v_std = kwargs.get('v_std')
-    dr = (r_ref - r)/r_std
-    dv = (v_ref - v)/v_std
-    
-    ret = np.empty((len(t),), dtype=[('dr', np.float64), ('dv', np.float64)])
-    ret['dr'] = dr
-    ret['dv'] = dv
-
-    return ret
-
-
-def sorting_function(metric, dr_scale, dv_scale):
-    '''How to sort the matches using a weight between range and range rate.
-    '''
-    P = np.sqrt((metric['dr']/dr_scale)**2 + (metric['dv']/dv_scale)**2)
-    return np.argsort(P, axis=0)
 
 
 def save_correlation_data(output_pth, indices, metric, correlation_data, meta=None):
@@ -171,6 +185,7 @@ def run():
     parser.add_argument('output', type=str, help='Results output location')
     parser.add_argument('-c', '--clobber', action='store_true', help='Override output location if it exists')
     parser.add_argument('--std', action='store_true', help='Use measurement errors')
+    parser.add_argument('--jitter', action='store_true', help='Use time jitter')
     parser.add_argument('--range-rate-scaling', default=0.2, type=float, help='Scaling used on range rate in the sorting function of the correlator')
     parser.add_argument('--range-scaling', default=1.0, type=float, help='Scaling used on range in the sorting function of the correlator')
 
@@ -178,11 +193,6 @@ def run():
 
     s_dr = args.range_rate_scaling
     s_r = args.range_scaling
-
-    if args.std:
-        metric = vector_diff_metric_std_normalized
-    else:
-        metric = vector_diff_metric
 
     radar = getattr(sorts.radars, args.radar)
 
@@ -197,6 +207,14 @@ def run():
         ]
     else:
         meta_vars = []
+
+    if args.jitter:
+        propagation_handling = jitter_propagation_handling
+    else:
+        propagation_handling = default_propagation_handling
+
+    meta_vars.append('dr_scale')
+    meta_vars.append('dv_scale')
 
     measurements = []
     if output_pth.is_file() and not args.clobber:
@@ -248,6 +266,8 @@ def run():
                     'tx': radar.tx[0],
                     'rx': radar.rx[0],
                     'measurement_num': len(t),
+                    'dr_scale': s_r,
+                    'dv_scale': s_dr,
                 }
 
                 if args.std:
@@ -281,11 +301,12 @@ def run():
             population = pop,
             n_closest = 1,
             meta_variables = meta_vars,
-            metric = metric, 
-            sorting_function = lambda x: sorting_function(x, s_r, s_dr),
-            metric_dtype = [('dr', np.float64), ('dv', np.float64)],
+            metric = vector_diff_metric, 
+            sorting_function = lambda x: np.argsort(x['metric'], axis=0),
+            metric_dtype = res_t,
             metric_reduce = None,
             scalar_metric = False,
+            propagation_handling = propagation_handling,
             MPI = MPI,
         )
 
