@@ -33,7 +33,8 @@ mpirun -n 6 ./beampark_correlator.py eiscat_esr ~/data/spade/beamparks/esr/2021.
 '''
 
 # dtype for residuals
-res_t = np.dtype([('dr', np.float64), ('dv', np.float64), ('metric', np.float64)])
+res_t = np.dtype([('dr', np.float64), ('dv', np.float64), ('metric', np.float64), ('jitter_index', np.float64)])
+t_jitter = np.linspace(-5, 5, num=11)
 
 try:
     from mpi4py import MPI
@@ -48,7 +49,6 @@ def default_propagation_handling(obj, t, t_measurement_indices, measurements):
 
 
 def jitter_propagation_handling(obj, t, t_measurement_indices, measurements):
-    t_jitter = np.linspace(-5, 5, num=11)
     t_get = t[:, None] + t_jitter[None, :]
 
     ret_shape = t_get.shape
@@ -77,12 +77,19 @@ def vector_diff_metric(t, r, v, r_ref, v_ref, **kwargs):
         ret['dr'] /= r_std[index_tuple]
         ret['dv'] /= v_std[index_tuple]
 
-    ret['metric'] = np.sqrt((ret['dr']/kwargs['dr_scale'])**2 + (ret['dv']/kwargs['dv_scale'])**2)
+    ret['metric'] = np.hypot(
+        ret['dr']/kwargs['dr_scale'],
+        ret['dv']/kwargs['dv_scale'],
+    )
 
     # Reduce jitter if it exists
     if len(base_shape) > 1:
         ret.shape = (base_shape[0], np.prod(base_shape[1:]))
-        ret = ret[np.arange(base_shape[0]), np.argmin(ret['metric'], axis=1)]
+        inds = np.argmin(ret['metric'], axis=1)
+        ret = ret[np.arange(base_shape[0]), inds]
+        ret['jitter_index'] = inds
+    else:
+        ret['jitter_index'] = np.nan
 
     return ret
 

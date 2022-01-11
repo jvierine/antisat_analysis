@@ -132,6 +132,8 @@ if __name__ == '__main__':
 
     x = metric['dr']*1e-3
     y = metric['dv']*1e-3
+    m = metric['metric']*1e-3
+    ji = metric['jitter_index']
     inds = np.logical_not(np.logical_or(np.isnan(x), np.isnan(y)))
     xp = x[inds]
     yp = y[inds]
@@ -155,8 +157,7 @@ if __name__ == '__main__':
     if out_path is not None:
         fig.savefig(out_path / f'{name}_residuals.png')
 
-    elip_dst = np.sqrt((x/scale_x)**2 + (y/scale_y)**2)
-    log10_elip_dst = np.log10(elip_dst[np.logical_not(np.isnan(elip_dst))])
+    log10_elip_dst = np.log10(m[np.logical_not(np.isnan(m))])
 
     fig, ax = plt.subplots(1, 1, figsize=(15, 15))
     ax.hist(log10_elip_dst, 100)
@@ -170,8 +171,8 @@ if __name__ == '__main__':
         fig.savefig(out_path / f'{name}_ellipse_distance.png')
 
     select = np.logical_and(
-        elip_dst < 1.0,
-        np.logical_not(np.isnan(elip_dst)),
+        m < 1.0,
+        np.logical_not(np.isnan(m)),
     ).flatten()
     not_select = np.logical_not(select)
 
@@ -205,5 +206,14 @@ if __name__ == '__main__':
 
     if out_path is not None:
         fig.savefig(out_path / f'{name}_rv_correlations.png')
+
+    fig, ax = plt.subplots(1, 1, figsize=(15, 15))
+    ax.hist([ji.flatten()[select], ji.flatten()[not_select]], stacked=True)
+    ax.set_xlabel('Jitter index [1]')
+    ax.set_ylabel('Frequency [1]')
+    ax.set_title(name)
+
+    if out_path is not None:
+        fig.savefig(out_path / f'{name}_jitter.png')
 
     plt.show()
