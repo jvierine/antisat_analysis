@@ -63,7 +63,7 @@ def read_spade(target_dir, output_h5):
             next_data = None
         elif first_line[2] == '1.4':
             next_data = pd.read_csv(file, sep=r'[ ]+', comment='%', skip_blank_lines=True, names=names_v1_4)
-        elif first_line[2] == '1.6':
+        elif first_line[2] == '1.6' or first_line[2] == '1.5':
             next_data = pd.read_csv(file, sep=r'[ ]+', comment='%', skip_blank_lines=True, names=names_v1_6)
         else:
             next_data = None
