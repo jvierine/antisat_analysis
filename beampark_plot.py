@@ -208,7 +208,7 @@ def plot_detections(data, radar, save_path=None, size=(10, 8)):
     save_fig('range_range_rate', save_path, fig, radar_escaped, fig_name)
 
 
-def main():
+def main(input_args=None):
 
     parser = argparse.ArgumentParser(
         description='Plot the observation data for a beampark',
@@ -226,7 +226,10 @@ def main():
     )
     parser.add_argument('data', type=str, nargs='+', help='Path(s) to measurement data to plot')
 
-    args = parser.parse_args()
+    if input_args is None:
+        args = parser.parse_args()
+    else:
+        args = parser.parse_args(input_args)
 
     if args.dark:
         plt.style.use('dark_background')

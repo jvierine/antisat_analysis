@@ -178,7 +178,7 @@ def save_correlation_data(output_pth, indices, metric, correlation_data, meta=No
         )
 
 
-def run():
+def run(input_args=None):
 
     if comm is not None:
         print('MPI detected')
@@ -196,7 +196,10 @@ def run():
     parser.add_argument('--range-rate-scaling', default=0.2, type=float, help='Scaling used on range rate in the sorting function of the correlator')
     parser.add_argument('--range-scaling', default=1.0, type=float, help='Scaling used on range in the sorting function of the correlator')
 
-    args = parser.parse_args()
+    if input_args is None:
+        args = parser.parse_args()
+    else:
+        args = parser.parse_args(input_args)
 
     s_dr = args.range_rate_scaling
     s_r = args.range_scaling

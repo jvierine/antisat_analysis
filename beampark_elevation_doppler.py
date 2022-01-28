@@ -622,7 +622,7 @@ def do_create_demoplots():
     plt.savefig('new_cache_figure_esr_north.png')
 
 
-def main():
+def main(input_args=None):
 
     parser = argparse.ArgumentParser(description='Calculate doppler-inclination correlation for a beampark')
 
@@ -647,7 +647,10 @@ def main():
 
     parser_demo = subparsers.add_parser('demo', help='Do predefined demo plotting')
 
-    args = parser.parse_args()
+    if input_args is None:
+        args = parser.parse_args()
+    else:
+        args = parser.parse_args(input_args)
 
     if args.command == 'run':
 

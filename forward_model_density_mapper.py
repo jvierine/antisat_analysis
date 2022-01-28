@@ -926,7 +926,7 @@ def invert(config, population, radar):
     plt.show()
 
 
-def main():
+def main(input_args=None):
 
     handler = logging.StreamHandler(sys.stdout)
     logger.setLevel(logging.INFO)
@@ -944,7 +944,10 @@ def main():
     )
     parser.add_argument('-c', '--clean', action='store_true', help='Remove simulation data before running')
     
-    args = parser.parse_args()
+    if input_args is None:
+        args = parser.parse_args()
+    else:
+        args = parser.parse_args(input_args)
 
     if not args.config.is_file():
         config = get_config(None)

@@ -23,11 +23,12 @@ python multi_beampark_correlator.py ~/data/spade/beamparks/uhf/2021.11.23/space-
 def metric_merge(metric, dr_scale, dv_scale):
     return np.sqrt((metric['dr']/dr_scale)**2 + (metric['dv']/dv_scale)**2)
 
+
 def get_matches(data, bp, index):
     return data[bp['beampark'][index]]['metric'][bp['measurement_id'][index]]
 
 
-if __name__ == '__main__':
+def main(input_args=None):
     parser = argparse.ArgumentParser(description='Analyse beampark correlation for a beampark')
     parser.add_argument('catalog', type=str, help='Catalog to which data was correlated')
     parser.add_argument('inputs', type=str, nargs='+', help='Input correlation data files')
@@ -35,7 +36,10 @@ if __name__ == '__main__':
     # This assumes correlation was done using the exact same TLE population so that
     #  object indecies match up in each correlation file
 
-    args = parser.parse_args()
+    if input_args is None:
+        args = parser.parse_args()
+    else:
+        args = parser.parse_args(input_args)
 
     tle_pth = pathlib.Path(args.catalog).resolve()
     input_pths = [pathlib.Path(x).resolve() for x in args.inputs]
@@ -138,3 +142,7 @@ if __name__ == '__main__':
         _data_m[key] = _data[key]
 
     print(tabulate(_data_m, headers=['OID', 'NORAD-ID', 'mjd0', 'line1', 'line2']))
+
+
+if __name__ == '__main__':
+    main()

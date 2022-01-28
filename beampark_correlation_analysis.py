@@ -89,8 +89,7 @@ def draw_ellipse(x_size, y_size, ax, res=100, style='-r', log=False):
     return ax
 
 
-
-if __name__ == '__main__':
+def main(input_args=None):
     parser = argparse.ArgumentParser(description='Analyse beampark correlation for a beampark')
     parser.add_argument('input', type=str, help='Input correlation data')
     parser.add_argument('measurements', type=str, help='Input measurement data')
@@ -217,3 +216,7 @@ if __name__ == '__main__':
         fig.savefig(out_path / f'{name}_jitter.png')
 
     plt.show()
+
+
+if __name__ == '__main__':
+    main()

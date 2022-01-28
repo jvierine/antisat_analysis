@@ -129,17 +129,23 @@ def read_spade(target_dir, output_h5):
     return t, r, v, snr, dur, diams
 
 
-if __name__ == '__main__':
-
+def main(input_args=None):
     parser = argparse.ArgumentParser(
         description='Convert EISCAT spade experiment results to a single h5 file',
     )
     parser.add_argument('input_directory', type=str, help='Observation data location')
     parser.add_argument('output_h5', type=str, help='Results output location')
 
-    args = parser.parse_args()
+    if input_args is None:
+        args = parser.parse_args()
+    else:
+        args = parser.parse_args(input_args)
 
     output_pth = pathlib.Path(args.output_h5).resolve()
     input_pth = pathlib.Path(args.input_directory).resolve()
 
     read_spade(input_pth, output_pth)
+
+
+if __name__ == '__main__':
+    main()
