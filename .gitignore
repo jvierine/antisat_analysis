@@ -3,6 +3,7 @@ data/
 cache/eiscat_uhf/density_mapping
 figures/
 plots/
+projects/output
 
 #Sublime
 *.sublime*

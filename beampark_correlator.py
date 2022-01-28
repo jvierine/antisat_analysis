@@ -178,7 +178,7 @@ def save_correlation_data(output_pth, indices, metric, correlation_data, meta=No
         )
 
 
-def run(input_args=None):
+def main(input_args=None):
 
     if comm is not None:
         print('MPI detected')
@@ -348,4 +348,4 @@ def run(input_args=None):
 
 
 if __name__ == '__main__':
-    run()
+    main()
