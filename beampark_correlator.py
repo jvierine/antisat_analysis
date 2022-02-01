@@ -94,7 +94,7 @@ def vector_diff_metric(t, r, v, r_ref, v_ref, **kwargs):
     return ret
 
 
-def save_correlation_data(output_pth, indices, metric, correlation_data, meta=None):
+def save_correlation_data(output_pth, indices, metric, correlation_data, meta=None, save_states=False):
     print(f'Saving correlation data to {output_pth}')
     with h5py.File(output_pth, 'w') as ds:
 
@@ -160,22 +160,24 @@ def save_correlation_data(output_pth, indices, metric, correlation_data, meta=No
         _create_ia_var(ds, 'simulated_range', 'Simulated range', stacker(correlation_data, 'r_ref'), scales, units='m')
         _create_ia_var(ds, 'simulated_range_rate', 'Simulated range rate', stacker(correlation_data, 'v_ref'), scales, units='m/s')
         _create_ia_var(ds, 'simulated_correlation_metric', 'Calculated metric for the simulated ITRS state', stacker(correlation_data, 'match'), scales)
-        _create_ia_var(
-            ds, 
-            'simulated_position', 
-            'Simulated ITRS positions', 
-            np.stack([val[measurement_set_index]['states'][:3, ...].T for _, val in correlation_data.items()], axis=0),
-            scales + [cartesian_pos],
-            units='m',
-        )
-        _create_ia_var(
-            ds, 
-            'simulated_velocity', 
-            'Simulated ITRS velocities', 
-            np.stack([val[measurement_set_index]['states'][3:, ...].T for _, val in correlation_data.items()], axis=0),
-            scales + [cartesian_vel],
-            units='m/s',
-        )
+        
+        if save_states:
+            _create_ia_var(
+                ds, 
+                'simulated_position', 
+                'Simulated ITRS positions', 
+                np.stack([val[measurement_set_index]['states'][:3, ...].T for _, val in correlation_data.items()], axis=0),
+                scales + [cartesian_pos],
+                units='m',
+            )
+            _create_ia_var(
+                ds, 
+                'simulated_velocity', 
+                'Simulated ITRS velocities', 
+                np.stack([val[measurement_set_index]['states'][3:, ...].T for _, val in correlation_data.items()], axis=0),
+                scales + [cartesian_vel],
+                units='m/s',
+            )
 
 
 def main(input_args=None):
@@ -195,6 +197,7 @@ def main(input_args=None):
     parser.add_argument('--jitter', action='store_true', help='Use time jitter')
     parser.add_argument('--range-rate-scaling', default=0.2, type=float, help='Scaling used on range rate in the sorting function of the correlator')
     parser.add_argument('--range-scaling', default=1.0, type=float, help='Scaling used on range in the sorting function of the correlator')
+    parser.add_argument('--save-states', action='store_true', help='Save simulated states')
 
     if input_args is None:
         args = parser.parse_args()
@@ -318,6 +321,7 @@ def main(input_args=None):
             scalar_metric = False,
             propagation_handling = propagation_handling,
             MPI = MPI,
+            save_states = args.save_states,
         )
 
         if comm is None or comm.rank == 0:
@@ -337,6 +341,7 @@ def main(input_args=None):
                     range_scaling = s_r,
                     range_rate_scaling = s_dr,
                 ),
+                save_states = args.save_states,
             )
 
     if comm is None or comm.rank == 0:
