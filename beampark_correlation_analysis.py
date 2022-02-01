@@ -202,7 +202,7 @@ def main(input_args=None):
         plt.close(fig)
 
     select = np.logical_and(
-        m < threshold,
+        m < threshold_,
         np.logical_not(np.isnan(m)),
     ).flatten()
     not_select = np.logical_not(select)
