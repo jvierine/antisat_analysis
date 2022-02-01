@@ -1,12 +1,14 @@
+#!/usr/bin/env python
 
 import argparse
 import pathlib
-import pickle
+from scipy.optimize import curve_fit
+import scipy.stats as st
 
 import matplotlib.pyplot as plt
 import numpy as np
 import h5py
-from astropy.time import Time
+
 
 '''
 
@@ -15,6 +17,11 @@ Example run
 python beampark_correlation_analysis.py ~/data/spade/beamparks/{uhf,esr}/2021.11.23/correlation.h5
 
 '''
+
+
+def bimodal(x, mu1, sigma1, A1, mu2, sigma2, A2):
+    return st.norm.pdf(x, mu1, sigma1)*A1 + st.norm.pdf(x, mu2, sigma2)*A2
+
 
 def plot_measurement_data(observed_data, simulated_data, axes=None):
     '''Plot the observed and simulated population object measurment parameters.
@@ -93,15 +100,21 @@ def main(input_args=None):
     parser = argparse.ArgumentParser(description='Analyse beampark correlation for a beampark')
     parser.add_argument('input', type=str, help='Input correlation data')
     parser.add_argument('measurements', type=str, help='Input measurement data')
-    parser.add_argument('--output', type=str, default='', help='Output folder for plots')
+    parser.add_argument('--output', type=str, default='', help='Output folder for plots and results')
+    parser.add_argument('--threshold', type=float, default=None, help='Treshold in elliptical distance to choose correlations')
+    parser.add_argument('--range-rate-scaling', default=0.2, type=float, help='Scaling used on range rate in the sorting function of the correlator')
+    parser.add_argument('--range-scaling', default=1.0, type=float, help='Scaling used on range in the sorting function of the correlator')
 
     args = parser.parse_args()
 
     arg_input = args.input
     meas_file = args.measurements
 
-    scale_x = 1.0
-    scale_y = 0.2
+    scale_x = args.range_scaling
+    scale_y = args.range_rate_scaling
+    threshold = args.threshold
+    if threshold is not None:
+        threshold *= 1e-3
 
     if len(args.output) > 0:
         out_path = pathlib.Path(args.output).resolve()
@@ -118,11 +131,11 @@ def main(input_args=None):
         t = h_det['t'][()] # Unix seconds
         v = h_det['v'][()]
 
-        inds = np.argsort(t)
+        inds_sort = np.argsort(t)
 
-        t = t[inds] - t.min()
-        r = r[inds]
-        v = v[inds]
+        t = t[inds_sort] - t.min()
+        r = r[inds_sort]
+        v = v[inds_sort]
 
     with h5py.File(input_pth, 'r') as ds:
         indecies = ds['matched_object_index'][()]
@@ -132,48 +145,71 @@ def main(input_args=None):
     x = metric['dr']*1e-3
     y = metric['dv']*1e-3
     m = metric['metric']*1e-3
-    ji = metric['jitter_index']
     inds = np.logical_not(np.logical_or(np.isnan(x), np.isnan(y)))
     xp = x[inds]
     yp = y[inds]
 
+    log10_elip_dst = np.log10(m[np.logical_not(np.isnan(m))])
+    count, bins = np.histogram(log10_elip_dst, 100)
+    bin_centers = (bins[1:] + bins[:-1])*0.5
+
+    start = (0, 0.5, np.max(count)*0.5, np.max(bin_centers), 0.5, np.max(count)*0.5)
+    params, cov = curve_fit(bimodal, bin_centers, count, start)
+
+    threshold_est = (params[0] + params[3])*0.5
+
+    print(f'ESTIMATED threshold: {threshold_est}')
+
     fig, axes = plt.subplots(1, 2, figsize=(15, 15))
+
+    if threshold is None:
+        threshold_ = threshold_est
+    else:
+        threshold_ = threshold
 
     for ax in axes:
         ax.plot(xp, yp, '.b')
         ax.plot([0, 0], [yp.min(), yp.max()], '-r')
         ax.plot([xp.min(), xp.max()], [0, 0], '-r')
 
-        draw_ellipse(scale_x, scale_y, ax)
+        draw_ellipse(scale_x*threshold_, scale_y*threshold_, ax)
 
         ax.set_xlabel('Range residuals [km]')
         ax.set_ylabel('Range-rate residuals [km/s]')
         ax.set_title(name)
 
-    axes[1].set_xlim([-scale_x, scale_x])
-    axes[1].set_ylim([-scale_y, scale_y])
+    axes[1].set_xlim([-scale_x*threshold_, scale_x*threshold_])
+    axes[1].set_ylim([-scale_y*threshold_, scale_y*threshold_])
 
     if out_path is not None:
         fig.savefig(out_path / f'{name}_residuals.png')
-
-    log10_elip_dst = np.log10(m[np.logical_not(np.isnan(m))])
+        plt.close(fig)
 
     fig, ax = plt.subplots(1, 1, figsize=(15, 15))
     ax.hist(log10_elip_dst, 100)
-    ax.plot([1, 1], ax.get_ylim(), '-r')
+    if threshold is not None:
+        ax.plot([threshold, threshold], ax.get_ylim(), '-g', label='Input threshold')
+    ax.plot([threshold_est, threshold_est], ax.get_ylim(), '--g', label='Estimated threshold')
+    ax.plot(bin_centers, bimodal(bin_centers, *params), '-r', label='Fit')
 
     ax.set_xlabel('Elliptical compound residual [log10(1)]')
     ax.set_ylabel('Frequency [1]')
     ax.set_title(name)
+    ax.legend()
 
     if out_path is not None:
         fig.savefig(out_path / f'{name}_ellipse_distance.png')
+        plt.close(fig)
 
     select = np.logical_and(
-        m < 1.0,
+        m < threshold,
         np.logical_not(np.isnan(m)),
     ).flatten()
     not_select = np.logical_not(select)
+
+    if out_path is not None:
+        res_file = out_path / f'{name}_selected_correlations.npy'
+        np.save(res_file, select)
 
     fig, axes = plt.subplots(2, 1, figsize=(15, 15))
 
@@ -194,6 +230,7 @@ def main(input_args=None):
 
     if out_path is not None:
         fig.savefig(out_path / f'{name}_rv_t_correlations.png')
+        plt.close(fig)
 
     fig, ax = plt.subplots(1, 1, figsize=(15, 15))
     ax.plot(r[select], v[select], '.r', label='Correlated')
@@ -205,17 +242,23 @@ def main(input_args=None):
 
     if out_path is not None:
         fig.savefig(out_path / f'{name}_rv_correlations.png')
+        plt.close(fig)
 
-    fig, ax = plt.subplots(1, 1, figsize=(15, 15))
-    ax.hist([ji.flatten()[select], ji.flatten()[not_select]], stacked=True)
-    ax.set_xlabel('Jitter index [1]')
-    ax.set_ylabel('Frequency [1]')
-    ax.set_title(name)
+    if 'jitter_index' in metric.dtype.names:
+        ji = metric['jitter_index']
 
-    if out_path is not None:
-        fig.savefig(out_path / f'{name}_jitter.png')
+        fig, ax = plt.subplots(1, 1, figsize=(15, 15))
+        ax.hist([ji.flatten()[select], ji.flatten()[not_select]], stacked=True)
+        ax.set_xlabel('Jitter index [1]')
+        ax.set_ylabel('Frequency [1]')
+        ax.set_title(name)
 
-    plt.show()
+        if out_path is not None:
+            fig.savefig(out_path / f'{name}_jitter.png')
+            plt.close(fig)
+
+    if out_path is None:
+        plt.show()
 
 
 if __name__ == '__main__':
