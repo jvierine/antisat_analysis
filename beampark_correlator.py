@@ -198,6 +198,7 @@ def main(input_args=None):
     parser.add_argument('--range-rate-scaling', default=0.2, type=float, help='Scaling used on range rate in the sorting function of the correlator')
     parser.add_argument('--range-scaling', default=1.0, type=float, help='Scaling used on range in the sorting function of the correlator')
     parser.add_argument('--save-states', action='store_true', help='Save simulated states')
+    parser.add_argument('--target-epoch', type=str, default=None, help='When filtering unique TLEs use this target epoch [ISO]')
 
     if input_args is None:
         args = parser.parse_args()
@@ -291,7 +292,11 @@ def main(input_args=None):
 
     print('Loading TLE population')
     pop = sorts.population.tle_catalog(tle_pth, cartesian=False)
-    pop.unique()
+
+    if args.target_epoch is not None:
+        args.target_epoch = Time(args.target_epoch, format='iso', scale='utc').mjd
+
+    pop.unique(target_epoch=args.target_epoch)
 
     # correlate requires output in ECEF 
     pop.out_frame = 'ITRS'

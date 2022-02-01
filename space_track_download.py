@@ -40,6 +40,7 @@ def main(input_args=None):
     parser.add_argument('output', nargs='?', type=argparse.FileType('w'), default=sys.stdout)
     parser.add_argument('--secret-tool-key', '-k', nargs=1)
     parser.add_argument('--credentials', '-c', nargs=1, help='File containing username and password for space-track.org')
+    parser.add_argument('--name', '-n', default=None, help='Name of the object to match with the "like" operator')
 
     if input_args is None:
         args = parser.parse_args()
@@ -63,6 +64,14 @@ def main(input_args=None):
         print(f'Output to {args.output.name}')
 
     drange = spacetrack.operators.inclusive_range(dt0, dt1)
+    kwargs = {}
+
+    if args.name is not None:
+        name_op = spacetrack.operators.like(args.name)
+        kwargs['object_name'] = name_op
+        kwargs['epoch'] = drange
+    else:
+        kwargs['publish_epoch'] = drange
 
     if args.secret_tool_key is not None:
         res = subprocess.run(['secret-tool', 'lookup', 'username'] + args.secret_tool_key, 
@@ -79,12 +88,22 @@ def main(input_args=None):
 
     st = spacetrack.SpaceTrackClient(user, passwd)
 
-    lines = st.tle_publish(
-        iter_lines=True, 
-        publish_epoch=drange, 
-        orderby='TLE_LINE1', 
-        format='tle',
-    )
+    if args.name is not None:
+        print('Using CLASS "tle"...')
+        lines = st.tle(
+            iter_lines=True, 
+            orderby='TLE_LINE1', 
+            format='tle',
+            **kwargs
+        )
+    else:
+        print('Using CLASS "tle_publish"...')
+        lines = st.tle_publish(
+            iter_lines=True, 
+            orderby='TLE_LINE1', 
+            format='tle',
+            **kwargs
+        )
     lineno = 0
     for line in lines:
         args.output.write(line + '\n')

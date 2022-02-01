@@ -20,7 +20,7 @@ python beampark_correlation_analysis.py ~/data/spade/beamparks/{uhf,esr}/2021.11
 
 
 def bimodal(x, mu1, sigma1, A1, mu2, sigma2, A2):
-    return st.norm.pdf(x, mu1, sigma1)*A1 + st.norm.pdf(x, mu2, sigma2)*A2
+    return st.norm.pdf(x, mu1, sigma1)*np.abs(A1) + st.norm.pdf(x, mu2, sigma2)*np.abs(A2)
 
 
 def plot_measurement_data(observed_data, simulated_data, axes=None):
@@ -150,15 +150,27 @@ def main(input_args=None):
     yp = y[inds]
 
     log10_elip_dst = np.log10(m[np.logical_not(np.isnan(m))])
-    count, bins = np.histogram(log10_elip_dst, 100)
-    bin_centers = (bins[1:] + bins[:-1])*0.5
+    num = int(np.round(np.sqrt(len(log10_elip_dst))))
 
-    start = (0, 0.5, np.max(count)*0.5, np.max(bin_centers), 0.5, np.max(count)*0.5)
-    params, cov = curve_fit(bimodal, bin_centers, count, start)
+    if num < 10:
+        if threshold is None:
+            print('treshold cannot be automatically determined: defaulting to 1')
+            threshold = 1.0
+        threshold_est = None
+    else:
+        count, bins = np.histogram(log10_elip_dst, num)
+        bin_centers = (bins[1:] + bins[:-1])*0.5
 
-    threshold_est = (params[0] + params[3])*0.5
+        start = (0, np.std(log10_elip_dst)*0.5, np.max(count)*0.5, np.max(bin_centers), np.std(log10_elip_dst)*0.5, np.max(count)*0.5)
+        params, cov = curve_fit(bimodal, bin_centers, count, start)
 
-    print(f'ESTIMATED threshold: {threshold_est}')
+        # this is intersection and is better estimate i think
+        log_threshold_sample = np.linspace(params[0], params[3], 1000)
+        log_threshold_intersection = np.argmin(bimodal(log_threshold_sample, *params))
+        threshold_est = 10**log_threshold_sample[log_threshold_intersection]
+        # threshold_est = 10**((params[0] + params[3])*0.5)
+
+        print(f'ESTIMATED threshold: {threshold_est*1e3}')
 
     fig, axes = plt.subplots(1, 2, figsize=(15, 15))
 
@@ -186,11 +198,12 @@ def main(input_args=None):
         plt.close(fig)
 
     fig, ax = plt.subplots(1, 1, figsize=(15, 15))
-    ax.hist(log10_elip_dst, 100)
+    ax.hist(log10_elip_dst, num)
     if threshold is not None:
-        ax.plot([threshold, threshold], ax.get_ylim(), '-g', label='Input threshold')
-    ax.plot([threshold_est, threshold_est], ax.get_ylim(), '--g', label='Estimated threshold')
-    ax.plot(bin_centers, bimodal(bin_centers, *params), '-r', label='Fit')
+        ax.plot([np.log10(threshold), np.log10(threshold)], ax.get_ylim(), '-g', label='Input threshold')
+    if threshold_est is not None:
+        ax.plot([np.log10(threshold_est), np.log10(threshold_est)], ax.get_ylim(), '--g', label='Estimated threshold')
+        ax.plot(np.linspace(bins[0], bins[-1], 1000), bimodal(np.linspace(bins[0], bins[-1], 1000), *params), '-r', label='Fit')
 
     ax.set_xlabel('Elliptical compound residual [log10(1)]')
     ax.set_ylabel('Frequency [1]')
