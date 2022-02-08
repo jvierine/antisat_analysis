@@ -39,6 +39,9 @@ def load_spade_extended(path):
         engine='python',
     )
     data['SNR'] = data['SNR']**2
+    for ti in range(len(data['t']) - 1):
+        if data['t'].values[ti] > data['t'].values[ti + 1]:
+            data['t'].values[(ti + 1):] += data['t'].values[ti]
     data['t'] = (data['t'] - np.min(data['t']))*1e-6
     data['r'] = data['r']*1e3
 
