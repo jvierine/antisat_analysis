@@ -13,11 +13,74 @@ import h5py
 python convert_spade_events_to_h5.py ./leo_bpark_2.1u_CN@uhf/ ./h5/leo.h5
 '''
 
+names_v1_4 = [
+    'YYYY', 'MM', 'DD', 
+    'hh', 'mm', 'ss.s', 
+    'TX', 'AZ', 'EL', 
+    'RT', 'RG', 'RR', 
+    'VD', 'AD', 'DI', 
+    'CS', 'TS', 'EN', 
+    'ED', 'TP', 'MT',
+]
+
+names_v1_6 = [
+    'YYYY', 'MM', 'DD', 
+    'hh', 'mm', 'ss.s', 
+    'ID', 'TX', 
+    'ST', 'AZ', 'EL', 
+    'HT', 'RT', 'RG', 
+    'RR', 'VD', 'AD', 
+    'DI', 'CS', 'TS', 
+    'EN', 'ED', 'TP', 
+    'MT', 
+]
+
 
 def date2unix(year, month, day, hour, minute, second):
     dt = datetime.datetime(year, month, day, hour, minute, second)
     timestamp = dt.replace(tzinfo=datetime.timezone.utc).timestamp()
     return timestamp
+
+
+def get_spade_data(files):
+    data = None
+    for file in files:
+        with open(file, 'r') as fh:
+            first_line = fh.readline().strip().split()
+
+        if len(first_line) < 3:
+            next_data = None
+        elif first_line[2] == '1.4':
+            next_data = pd.read_csv(
+                file, 
+                sep=r'[ ]+', 
+                comment='%', 
+                skip_blank_lines=True, 
+                names=names_v1_4,
+            )
+        elif first_line[2] == '1.6' or first_line[2] == '1.5':
+            next_data = pd.read_csv(
+                file, 
+                sep=r'[ ]+', 
+                comment='%', 
+                skip_blank_lines=True, 
+                names=names_v1_6,
+            )
+        else:
+            next_data = None
+
+        if next_data is None:
+            print(f'{file}: File not known SPADE-file...')
+            continue
+        else:
+            print(f'{file}: Detected SPADE-file version {first_line[2]}...')
+
+        if data is None:
+            data = next_data
+        else:
+            data = pd.concat([data, next_data])
+
+    return data
 
 
 def read_spade(target_dir, output_h5):
@@ -32,52 +95,7 @@ def read_spade(target_dir, output_h5):
     durs = []
     diams = []
     
-    names_v1_4 = [
-        'YYYY', 'MM', 'DD', 
-        'hh', 'mm', 'ss.s', 
-        'TX', 'AZ', 'EL', 
-        'RT', 'RG', 'RR', 
-        'VD', 'AD', 'DI', 
-        'CS', 'TS', 'EN', 
-        'ED', 'TP', 'MT',
-    ]
-
-    names_v1_6 = [
-        'YYYY', 'MM', 'DD', 
-        'hh', 'mm', 'ss.s', 
-        'ID', 'TX', 
-        'ST', 'AZ', 'EL', 
-        'HT', 'RT', 'RG', 
-        'RR', 'VD', 'AD', 
-        'DI', 'CS', 'TS', 
-        'EN', 'ED', 'TP', 
-        'MT', 
-    ]
-
-    data = None
-    for file in files:
-        with open(file, 'r') as fh:
-            first_line = fh.readline().strip().split()
-
-        if len(first_line) < 3:
-            next_data = None
-        elif first_line[2] == '1.4':
-            next_data = pd.read_csv(file, sep=r'[ ]+', comment='%', skip_blank_lines=True, names=names_v1_4)
-        elif first_line[2] == '1.6' or first_line[2] == '1.5':
-            next_data = pd.read_csv(file, sep=r'[ ]+', comment='%', skip_blank_lines=True, names=names_v1_6)
-        else:
-            next_data = None
-
-        if next_data is None:
-            print(f'{file}: File not known SPADE-file...')
-            continue
-        else:
-            print(f'{file}: Detected SPADE-file version {first_line[2]}...')
-
-        if data is None:
-            data = next_data
-        else:
-            data = pd.concat([data, next_data])
+    data = get_spade_data(files)
 
     if data is None:
         raise ValueError('No valid files found!')
