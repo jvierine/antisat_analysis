@@ -13,6 +13,8 @@ import h5py
 python convert_spade_events_to_h5.py ./leo_bpark_2.1u_CN@uhf/ ./h5/leo.h5
 '''
 
+MIN_SNR = 33
+
 names_v1_4 = [
     'YYYY', 'MM', 'DD', 
     'hh', 'mm', 'ss.s', 
@@ -104,8 +106,8 @@ def read_spade(target_dir, output_h5):
 
         sn = row['RT']**2.0
 
-        if sn <= 33:
-            print(f'Skipping row {ind}: rt**2.0 = sn = {sn} <= 33')
+        if sn <= MIN_SNR:
+            print(f'Skipping row {ind}: rt**2.0 = sn = {sn} <= {MIN_SNR}')
             continue
         else:
             print(f"Adding row {ind}")
