@@ -44,7 +44,7 @@ def date2unix(year, month, day, hour, minute, second):
     return timestamp
 
 
-def get_spade_data(files):
+def get_spade_data(files, verbose=False):
     data = None
     for file in files:
         with open(file, 'r') as fh:
@@ -59,6 +59,7 @@ def get_spade_data(files):
                 comment='%', 
                 skip_blank_lines=True, 
                 names=names_v1_4,
+                engine='python',
             )
         elif first_line[2] == '1.6' or first_line[2] == '1.5':
             next_data = pd.read_csv(
@@ -67,15 +68,18 @@ def get_spade_data(files):
                 comment='%', 
                 skip_blank_lines=True, 
                 names=names_v1_6,
+                engine='python',
             )
         else:
             next_data = None
 
         if next_data is None:
-            print(f'{file}: File not known SPADE-file...')
+            if verbose:
+                print(f'{file}: File not known SPADE-file...')
             continue
         else:
-            print(f'{file}: Detected SPADE-file version {first_line[2]}...')
+            if verbose:
+                print(f'{file}: Detected SPADE-file version {first_line[2]}...')
 
         if data is None:
             data = next_data
@@ -97,7 +101,7 @@ def read_spade(target_dir, output_h5):
     durs = []
     diams = []
     
-    data = get_spade_data(files)
+    data = get_spade_data(files, verbose=True)
 
     if data is None:
         raise ValueError('No valid files found!')
