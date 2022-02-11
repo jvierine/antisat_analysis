@@ -23,7 +23,7 @@ from convert_spade_events_to_h5 import MIN_SNR
 '''
 Example execution:
 
-./beampark_rcs_estimation.py -v -n 6 \
+./beampark_rcs_estimation.py estimate -v -n 6 \
     eiscat_uhf \
     ~/data/spade/beamparks/uhf/2021.11.23/leo_bpark_2.1u_NO@uhf_extended/ \
     ./projects/output/russian_asat/2021.11.23_uhf_rcs
@@ -45,7 +45,8 @@ def matching_function(data, SNR_sim, low_gain_inds, args, ind):
         match = np.sum(xsn*ysn)/norm_coef
 
     # Apply weighting based on amount of data used
-    # match *= np.sum(low_gain_inds[use_data])/np.sum(use_data)
+    points = np.sum(use_data)
+    match *= (points - np.sum(low_gain_inds[use_data]))/points
 
     return match, ind
 
@@ -228,104 +229,12 @@ def plot_match(
     plt.close(fig)
 
 
-def main(input_args=None):
-
-    parser = argparse.ArgumentParser(description='Estimate possible RCS values \
-        for target using SNR time series for each event.')
-    parser.add_argument('radar', type=str, help='The observing radar system')
-    parser.add_argument('input', type=str, help='Observation data folder, \
-        expects folder with *.hlist files and an events.txt summary file.')
-    parser.add_argument('output', type=str, help='Results output location')
-    parser.add_argument(
-        '-v',
-        action='store_true', 
-        help='Verbose output',
-    )
-    parser.add_argument(
-        '--catalog',
-        type=str, 
-        default='', 
-        help='TLE catalog path, needed to calculate predicted SNR and RCS \
-        curves of correlated objects.',
-    )
-    parser.add_argument(
-        '--matches-plotted',
-        default=1,
-        metavar='NUM',
-        type=int, 
-        help='The number of best matches to plot.',
-    )
-    parser.add_argument(
-        '-n', '--processes',
-        default=1,
-        metavar='NUM',
-        type=int,
-        help='Number of parallel processes used for calculations.',
-    )
-    parser.add_argument(
-        '-c', '--clobber', 
-        action='store_true', 
-        help='Override output location if it exists',
-    )
-    parser.add_argument(
-        '--min-gain',
-        default=10.0,
-        metavar='MIN',
-        type=float, 
-        help='The minimum amount of dB one way gain at which to evalute \
-        SNR and RCS',
-    )
-    parser.add_argument(
-        '--min-snr',
-        default=10.0,
-        metavar='MIN',
-        type=float, 
-        help='The minimum amount of measured SNR dB at which to evalute \
-        SNR and RCS',
-    )
-    parser.add_argument(
-        '--inclination-limits',
-        nargs=2, 
-        default=[-0.008, 0.008],
-        metavar=('MIN', 'MAX'),
-        type=float, 
-        help='The width of the inclination perturbation of the proxy orbit, \
-        determines the off-track width of the gain sampling',
-    )
-    parser.add_argument(
-        '--inclination-samples',
-        default=200,
-        metavar='NUM',
-        type=int, 
-        help='Number of samples to use for inclination perturbations.',
-    )
-    parser.add_argument(
-        '--anomaly-limits',
-        nargs=2, 
-        default=[-0.005, 0.005],
-        metavar=('MIN', 'MAX'),
-        type=float, 
-        help='The width of the anomaly perturbation of the proxy orbit, \
-        determines the off-track width of the gain sampling',
-    )
-    parser.add_argument(
-        '--anomaly-samples',
-        default=50,
-        metavar='NUM',
-        type=int, 
-        help='Number of samples to use for anomaly perturbations.',
-    )
+def main_estimate(args):
 
     dt = 1.0
 
-    if input_args is None:
-        args = parser.parse_args()
-    else:
-        args = parser.parse_args(input_args)
-
     radar = getattr(sorts.radars, args.radar)
 
-    tle_pth = None if len(args.catalog) == 0 else Path(args.catalog).resolve()
     output_pth = Path(args.output).resolve()
     input_pth = Path(args.input).resolve()
 
@@ -333,7 +242,7 @@ def main(input_args=None):
     input_summaries = list(input_pth.rglob('events.txt'))
     event_names = [x.stem for x in input_pths]
     output_pth.mkdir(exist_ok=True, parents=True)
-    
+
     prop = sorts.propagator.Kepler(
         settings=dict(
             in_frame='TEME',
@@ -392,6 +301,7 @@ def main(input_args=None):
         results_folder = output_pth / event_name
         results_folder.mkdir(exist_ok=True)
         cache_file = results_folder / f'{event_name}_rcs.pickle'
+        match_file = results_folder / f'{event_name}_results.pickle'
         data_path = input_pths[evi]
 
         data = load_spade_extended(data_path)
@@ -489,11 +399,13 @@ def main(input_args=None):
         diams = [None for x in range(samps)]
         SNR_sims = [None for x in range(samps)]
         pths = [None for x in range(samps)]
+        gains = [None for x in range(samps)]
         low_gains = [None for x in range(samps)]
         for ind in range(samps):
             pth, diam, SNR_sim, G_pth, ind = reses[ind]
 
             G_pth_db = 10*np.log10(G_pth)
+            gains[ind] = G_pth_db
             low_gain_inds = G_pth_db < args.min_gain
             diam[low_gain_inds] = np.nan
             SNR_sim[low_gain_inds] = 0
@@ -534,9 +446,11 @@ def main(input_args=None):
         sn_m_max = np.max(data['SNR'].values)
         sn_m = data['SNR'].values/sn_m_max
 
-        best_matches = np.argsort(matches)[::-1]
-        best_diams = np.array([diams[ind][snr_max] for ind in best_matches])
-        best_ind = best_matches[0]
+        best_matches_inds = np.argsort(matches)[::-1]
+        best_matches = matches[best_matches_inds]
+        best_diams = np.array([diams[ind][snr_max] for ind in best_matches_inds])
+        best_gains = np.array([gains[ind][snr_max] for ind in best_matches_inds])
+        best_ind = best_matches_inds[0]
 
         off_angles = np.zeros_like(matches)
         for ind in range(samps):
@@ -545,6 +459,7 @@ def main(input_args=None):
                  radar.tx[0].beam.pointing, 
                  radians=False,
             )
+        best_offaxis = off_angles[best_matches_inds]
         off_angles = off_angles.reshape(matches_mat.shape)
         offset_angle = pyant.coordinates.vector_angle(
              pths[best_ind][:, snr_max], 
@@ -556,6 +471,20 @@ def main(input_args=None):
             print(f'Inclination offset {incs[best_ind]} deg')
             print(f'Anom offset {nus[best_ind]} deg')
             print(f'Offaxis angle {offset_angle} deg')
+
+        summary_data = dict(
+            best_matches_inds = best_matches_inds, 
+            best_matches = best_matches,
+            best_diams = best_diams,
+            best_gains = best_gains, 
+            best_offaxis = best_offaxis,
+            best_path = pths[best_ind],
+            best_inc = incs[best_ind],
+            best_anom = nus[best_ind],
+        )
+
+        with open(match_file, 'wb') as fh:
+            pickle.dump(summary_data, fh)
 
         if args.v:
             print('Plotting...')
@@ -580,10 +509,10 @@ def main(input_args=None):
         plt.close(fig2)
 
         fig, ax = plt.subplots(figsize=(12, 8))
-        ax.plot(np.log10(best_diams*1e2), matches, '.', label='Samples')
+        ax.plot(np.log10(best_diams*1e2), best_matches, '.', label='Samples')
         ax.plot(
-            np.log10(best_diams[best_ind]*1e2), 
-            matches[best_ind], 
+            np.log10(best_diams[0]*1e2), 
+            best_matches[0], 
             'or', 
             label='Best match',
         )
@@ -593,7 +522,7 @@ def main(input_args=None):
         plt.close(fig)
 
         mch_rank = 0
-        for mch_ind in best_matches[:args.matches_plotted]:
+        for mch_ind in best_matches_inds[:args.matches_plotted]:
             mch_rank += 1
 
             sn_s = SNR_sims[mch_ind]/np.max(SNR_sims[mch_ind])
@@ -612,7 +541,7 @@ def main(input_args=None):
             data, orig, diams, 
             t_, dt, use_data, 
             not_use_data, sn_s, sn_m, 
-            np.argwhere(best_matches == orig).flatten()[0], 
+            np.argwhere(best_matches_inds == orig).flatten()[0], 
             results_folder, radar, pths,
         )
 
@@ -636,8 +565,168 @@ def main(input_args=None):
         fig.savefig(results_folder / 'offaxis_heat.png')
         plt.close(fig)
 
-        print('ABORTING')
-        exit()
+
+def main_predict(args):
+    radar = getattr(sorts.radars, args.radar)
+
+    tle_pth = None if len(args.catalog) == 0 else Path(args.catalog).resolve()
+    output_pth = Path(args.output).resolve()
+    input_pth = Path(args.input).resolve()
+    corr_pth = Path(args.correlation_data).resolve()
+    corr_select_pth = Path(args.correlation_results).resolve()
+
+    input_pths = list(input_pth.rglob('*.hlist'))
+    input_summaries = list(input_pth.rglob('events.txt'))
+    event_names = [x.stem for x in input_pths]
+    output_pth.mkdir(exist_ok=True, parents=True)
+
+
+def build_predict_parser(parser):
+    parser.add_argument('radar', type=str, help='The observing radar system')
+    parser.add_argument('catalog', type=str, help='TLE catalog path')
+    parser.add_argument('correlation-data', type=str, help='Path to \
+        correlation data')
+    parser.add_argument('correlation-results', type=str, help='Path to \
+        correlation results')
+    parser.add_argument('input', type=str, help='Observation data folder, \
+        expects folder with *.hlist files and an events.txt summary file.')
+    parser.add_argument('output', type=str, help='Results output location')
+
+    return parser
+
+
+def build_collect_parser(parser):
+    parser.add_argument('input', type=str, help='Results output location to \
+        collect results from')
+    parser.add_argument('output', type=str, help='Folder to save collection \
+        output to')
+    return parser
+
+
+def build_estimate_parser(parser):
+    parser.add_argument('radar', type=str, help='The observing radar system')
+    parser.add_argument('input', type=str, help='Observation data folder, \
+        expects folder with *.hlist files and an events.txt summary file.')
+    parser.add_argument('output', type=str, help='Results output location')
+    parser.add_argument(
+        '-v',
+        action='store_true', 
+        help='Verbose output',
+    )
+
+    parser.add_argument(
+        '--matches-plotted',
+        default=1,
+        metavar='NUM',
+        type=int, 
+        help='The number of best matches to plot.',
+    )
+    parser.add_argument(
+        '-n', '--processes',
+        default=1,
+        metavar='NUM',
+        type=int,
+        help='Number of parallel processes used for calculations.',
+    )
+    parser.add_argument(
+        '-c', '--clobber', 
+        action='store_true', 
+        help='Override output location if it exists',
+    )
+    parser.add_argument(
+        '--min-gain',
+        default=10.0,
+        metavar='MIN',
+        type=float, 
+        help='The minimum amount of dB one way gain at which to evalute \
+        SNR and RCS',
+    )
+    parser.add_argument(
+        '--min-snr',
+        default=5.0,
+        metavar='MIN',
+        type=float, 
+        help='The minimum amount of measured SNR dB at which to evalute \
+        SNR and RCS',
+    )
+    parser.add_argument(
+        '--inclination-limits',
+        nargs=2, 
+        default=[-0.008, 0.008],
+        metavar=('MIN', 'MAX'),
+        type=float, 
+        help='The width of the inclination perturbation of the proxy orbit, \
+        determines the off-track width of the gain sampling',
+    )
+    parser.add_argument(
+        '--inclination-samples',
+        default=200,
+        metavar='NUM',
+        type=int, 
+        help='Number of samples to use for inclination perturbations.',
+    )
+    parser.add_argument(
+        '--anomaly-limits',
+        nargs=2, 
+        default=[-0.005, 0.005],
+        metavar=('MIN', 'MAX'),
+        type=float, 
+        help='The width of the anomaly perturbation of the proxy orbit, \
+        determines the off-track width of the gain sampling',
+    )
+    parser.add_argument(
+        '--anomaly-samples',
+        default=50,
+        metavar='NUM',
+        type=int, 
+        help='Number of samples to use for anomaly perturbations.',
+    )
+
+    return parser
+
+
+def build_parser():
+
+    parser = argparse.ArgumentParser(description='Analyze detailed SNR curves \
+        to determine RCS and statistics')
+
+    subparsers = parser.add_subparsers(
+        help='Available command line interfaces', 
+        dest='command',
+    )
+    subparsers.required = True
+
+    estimate_parser = subparsers.add_parser('estimate', help='Estimate RCS \
+        values for target using SNR time series for each event.')
+    estimate_parser = build_estimate_parser(estimate_parser)
+
+    predict_parser = subparsers.add_parser('predict', help='Estimate RCS \
+        values for target using correlation and TLE.')
+    predict_parser = build_predict_parser(predict_parser)
+
+    collect_parser = subparsers.add_parser('collect', help='Collect RCS \
+        statistics from "estimate" and "predict"')
+    collect_parser = build_collect_parser(collect_parser)
+
+    return parser
+
+
+def main(input_args=None):
+    parser = build_parser()
+
+    if input_args is None:
+        args = parser.parse_args()
+    else:
+        args = parser.parse_args(input_args)
+
+    print(f'Entering sub-system: {args.command.upper()}')
+
+    if args.command == 'estimate':
+        main_estimate(args)
+    elif args.command == 'predict':
+        main_predict(args)
+    elif args.command == 'collect':
+        pass
 
 
 if __name__ == '__main__':
