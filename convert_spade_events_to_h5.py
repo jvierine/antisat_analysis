@@ -89,7 +89,7 @@ def get_spade_data(files, verbose=False):
     return data
 
 
-def read_spade(target_dir, output_h5):
+def read_spade(target_dir, output_h5, verbose=False):
 
     files = list(target_dir.glob('**/*.txt'))
     files.sort()
@@ -101,7 +101,7 @@ def read_spade(target_dir, output_h5):
     durs = []
     diams = []
     
-    data = get_spade_data(files, verbose=True)
+    data = get_spade_data(files, verbose=verbose)
 
     if data is None:
         raise ValueError('No valid files found!')
@@ -111,10 +111,12 @@ def read_spade(target_dir, output_h5):
         sn = row['RT']**2.0
 
         if sn <= MIN_SNR:
-            print(f'Skipping row {ind}: rt**2.0 = sn = {sn} <= {MIN_SNR}')
+            if verbose:
+                print(f'Skipping row {ind}: rt**2.0 = sn = {sn} <= {MIN_SNR}')
             continue
         else:
-            print(f"Adding row {ind}")
+            if verbose:
+                print(f"Adding row {ind}")
 
         t0 = date2unix(
             int(row['YYYY']), 
@@ -141,14 +143,15 @@ def read_spade(target_dir, output_h5):
     diams = np.array(diams)
     
     # store in hdf5 format
-    ho = h5py.File(output_h5, "w")
-    ho["t"] = t    # t
-    ho["r"] = r    # r  
-    ho["v"] = v    # vel
-    ho["snr"] = snr  # snr
-    ho["dur"] = dur  # duration
-    ho["diams"] = diams  # minimum diameter
-    ho.close()
+    if output_h5 is not None:
+        ho = h5py.File(output_h5, "w")
+        ho["t"] = t    # t
+        ho["r"] = r    # r  
+        ho["v"] = v    # vel
+        ho["snr"] = snr  # snr
+        ho["dur"] = dur  # duration
+        ho["diams"] = diams  # minimum diameter
+        ho.close()
 
     return t, r, v, snr, dur, diams
 
@@ -168,7 +171,7 @@ def main(input_args=None):
     output_pth = pathlib.Path(args.output_h5).resolve()
     input_pth = pathlib.Path(args.input_directory).resolve()
 
-    read_spade(input_pth, output_pth)
+    read_spade(input_pth, output_pth, verbose=True)
 
 
 if __name__ == '__main__':

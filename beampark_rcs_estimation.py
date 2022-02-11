@@ -8,16 +8,18 @@ import argparse
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from astropy.time import Time, TimeDelta
+from astropy.time import Time
 import scipy.optimize as sciopt
 from tqdm import tqdm
 import multiprocessing as mp
+import h5py
 
 import sorts
 import pyant
 import pyorb
 
 from convert_spade_events_to_h5 import get_spade_data
+from convert_spade_events_to_h5 import read_spade, date2unix
 from convert_spade_events_to_h5 import MIN_SNR
 
 '''
@@ -27,6 +29,15 @@ Example execution:
     eiscat_uhf \
     ~/data/spade/beamparks/uhf/2021.11.23/leo_bpark_2.1u_NO@uhf_extended/ \
     ./projects/output/russian_asat/2021.11.23_uhf_rcs
+
+./beampark_rcs_estimation.py predict eiscat_uhf \
+    projects/output/russian_asat/{\
+    2021_11_23_spacetrack.tle,\
+    uhf/2021.11.23.h5,\
+    2021.11.23_uhf_correlation.pickle,\
+    2021.11.23_uhf_correlation_plots/eiscat_uhf_selected_correlations.npy} \
+    ~/data/spade/beamparks/uhf/2021.11.23/leo_bpark_2.1u_NO@uhf_extended/ \
+    projects/output/russian_asat/2021.11.23_uhf_rcs
 
 '''
 
@@ -229,6 +240,44 @@ def plot_match(
     plt.close(fig)
 
 
+def read_extended_event_data(input_summaries, args):
+    _event_datas = []
+    for events_file in input_summaries:
+        _event_data = get_spade_data([events_file], verbose=args.v)
+
+        _extended_files = []
+        with open(events_file, 'r') as fh:
+            for ind, line in enumerate(fh):
+                if ind < 33 or len(line.strip()) == 0:
+                    continue
+                ev_name = line[181:].strip()
+                _extended_files.append(ev_name)
+        _event_data['event_name'] = _extended_files
+
+        # Filter like the h5 generator filters
+        disc = np.argwhere(_event_data['RT'].values**2.0 <= MIN_SNR).flatten()
+        _event_data.drop(disc, inplace=True)
+        _event_datas.append(_event_data)
+
+    event_data = pd.concat(_event_datas)
+
+    dts = []
+    for ind in range(len(event_data)):
+        t0 = date2unix(
+            int(event_data['YYYY'].values[ind]), 
+            int(event_data['MM'].values[ind]), 
+            int(event_data['DD'].values[ind]), 
+            int(event_data['hh'].values[ind]), 
+            int(event_data['mm'].values[ind]),
+            0,
+        )
+        t0 += event_data['ss.s'].values[ind]
+        dts.append(t0)
+    event_data['t'] = dts
+
+    return event_data
+
+
 def main_estimate(args):
 
     dt = 1.0
@@ -266,27 +315,7 @@ def main_estimate(args):
     nus = nus_mat.reshape((nus_mat.size, ))
     samps = len(incs)
 
-    _event_datas = []
-    for events_file in input_summaries:
-        _event_data = get_spade_data([events_file], verbose=args.v)
-
-        _extended_files = []
-        with open(events_file, 'r') as fh:
-            for ind, line in enumerate(fh):
-                if ind < 33 or len(line.strip()) == 0:
-                    continue
-                ev_name = line[181:].strip()
-                _extended_files.append(ev_name)
-        _event_data['event_name'] = _extended_files
-
-        # Filter like the h5 generator filters
-        discard = np.argwhere(_event_data['RT'].values**2.0 <= MIN_SNR).flatten()
-        _event_data.drop(discard)
-        _event_datas.append(_event_data)
-
-    event_data = pd.concat(_event_datas)
-    del _event_datas
-    del _event_data
+    event_data = read_extended_event_data(input_summaries, args)
 
     for evi, event_name in enumerate(event_names):
         event_indexing = event_data['event_name'] == event_name
@@ -569,9 +598,13 @@ def main_estimate(args):
 def main_predict(args):
     radar = getattr(sorts.radars, args.radar)
 
+    G_db_lim = 1
+    est_diam = 1e0
+
     tle_pth = None if len(args.catalog) == 0 else Path(args.catalog).resolve()
     output_pth = Path(args.output).resolve()
     input_pth = Path(args.input).resolve()
+    corr_events = Path(args.correlation_events).resolve()
     corr_pth = Path(args.correlation_data).resolve()
     corr_select_pth = Path(args.correlation_results).resolve()
 
@@ -580,13 +613,215 @@ def main_predict(args):
     event_names = [x.stem for x in input_pths]
     output_pth.mkdir(exist_ok=True, parents=True)
 
+    correlation_select = np.load(corr_select_pth)
+
+    with h5py.File(corr_pth, 'r') as ds:
+        indecies = ds['matched_object_index'][()][0, :]
+        measurnment_id = ds['observation_index'][()]
+        indecies = indecies[measurnment_id]
+        measurnment_id = np.arange(len(measurnment_id))
+
+    event_data = read_extended_event_data(input_summaries, args)
+
+    _input_pths = []
+    for event_name in event_data['event_name'].values:
+        event_name = str(event_name)
+        if event_name not in event_names:
+            continue
+        event_indexing = event_names.index(event_name)
+        _input_pths.append(input_pths[event_indexing])
+    event_data['path'] = _input_pths
+    event_data.sort_values(by=['t'], inplace=True)
+
+    event_names = event_data['event_name'].values.copy()
+    event_paths = event_data['path'].values.copy()
+
+    _ret = read_spade(input_pth, output_h5=None)
+    t_extended = _ret[0]
+    t_extended = t_extended[np.argsort(t_extended)]
+    times_extended = Time(t_extended, format='unix', scale='utc')
+
+    # select only from sub_folder in case correlation is for more data
+    t0 = min(times_extended)
+    t1 = max(times_extended)
+
+    print('Selecting')
+    print(t0.iso)
+    print(t1.iso)
+
+    with h5py.File(corr_events, 'r') as h_det:
+        r = h_det['r'][()]*1e3  # km -> m, one way
+        t = h_det['t'][()]  # Unix seconds
+        v = h_det['v'][()]*1e3  # km/s -> m/s
+        inds = np.argsort(t)
+        t = t[inds]
+        r = r[inds]
+        v = v[inds]
+
+        times = Time(t, format='unix', scale='utc')
+        epoch = times[0]
+        t = (times - epoch).sec
+
+    sub_select_inds = np.logical_and(
+        times >= t0, 
+        times <= t1,
+    )
+
+    sub_measurnment_id = measurnment_id[sub_select_inds]
+    sub_correlation_select = correlation_select[sub_select_inds]
+    sub_indecies = indecies.flatten()[sub_select_inds]
+
+    correlated_measurnment_id = sub_measurnment_id[sub_correlation_select]
+    correlated_object_id = sub_indecies[sub_correlation_select]
+
+    correlated_extended_files = event_paths[sub_correlation_select]
+    correlated_extended_names = event_names[sub_correlation_select]
+    
+    pop = sorts.population.tle_catalog(tle_pth, cartesian=False)
+    pop.unique()
+
+    for select_id in range(len(correlated_measurnment_id)):
+
+        meas_id = correlated_measurnment_id[select_id]
+        obj_id = correlated_object_id[select_id]
+        event_path = str(correlated_extended_files[select_id])
+        event_name = str(correlated_extended_names[select_id])
+        obj = pop.get_object(obj_id)
+        print('Correlated TLE object for :')
+        print(f' - measurement {meas_id}')
+        print(f' - object {obj_id}')
+        print(f' - event {event_name}')
+        print(obj)
+        print(event_path)
+        obj.out_frame = 'ITRS'
+
+        results_folder = output_pth / event_name
+        results_folder.mkdir(exist_ok=True)
+
+        data = load_spade_extended(event_path)
+
+        radar.tx[0].beam.sph_point(azimuth=90, elevation=75)
+
+        dt = (times[meas_id] - obj.epoch).sec
+        peak_snr_id = np.argmax(data['SNR'].values)
+        t_vec = data['t'].values - data['t'].values[peak_snr_id]
+
+        states_ecef = obj.get_state(dt + t_vec)
+        ecef_r = states_ecef[:3, :] - radar.tx[0].ecef[:, None]
+
+        local_pos = sorts.frames.ecef_to_enu(
+            radar.tx[0].lat, 
+            radar.tx[0].lon, 
+            radar.tx[0].alt, 
+            ecef_r,
+            radians=False,
+        )
+
+        pth = local_pos/np.linalg.norm(local_pos, axis=0)
+        G_pth = radar.tx[0].beam.gain(pth)
+        G_pth_db = 10*np.log10(G_pth)
+        diam = sorts.signals.hard_target_diameter(
+            G_pth, 
+            G_pth,
+            radar.tx[0].wavelength,
+            radar.tx[0].power,
+            data['r'].values, 
+            data['r'].values,
+            data['SNR'].values, 
+            bandwidth=radar.tx[0].coh_int_bandwidth,
+            rx_noise_temp=radar.rx[0].noise,
+            radar_albedo=1.0,
+        )
+        SNR_sim = sorts.signals.hard_target_snr(
+            G_pth, 
+            G_pth,
+            radar.tx[0].wavelength,
+            radar.tx[0].power,
+            data['r'].values, 
+            data['r'].values,
+            diameter=est_diam, 
+            bandwidth=radar.tx[0].coh_int_bandwidth,
+            rx_noise_temp=radar.rx[0].noise,
+            radar_albedo=1.0,
+        )
+
+        diam[G_pth_db < G_db_lim] = np.nan
+        SNR_sim[G_pth_db < G_db_lim] = 0
+
+        fig, ax = plt.subplots(figsize=(12, 8))
+        ax.plot(data['t'], np.linalg.norm(ecef_r, axis=0))
+        ax.plot(data['t'], data['r'])
+        ax.plot([data['t'].values[peak_snr_id]], [r[meas_id]], 'or')
+
+        fig.savefig(results_folder / 'correlated_pass_range_match.png')
+        plt.close(fig)
+
+        fig, ax = plt.subplots(figsize=(12, 8))
+        ax.plot(pth[0, :], pth[1, :], '-w')
+        pyant.plotting.gain_heatmap(radar.tx[0].beam, min_elevation=85.0, ax=ax)
+
+        fig.savefig(results_folder / 'correlated_pass_pth_gain.png')
+        plt.close(fig)
+
+        fig, axes = plt.subplots(2, 2, figsize=(16, 8), sharex=True)
+        axes[0, 0].plot(data['t'], diam*1e2)
+        axes[0, 0].set_ylabel('Diameter [cm]')
+        axes[0, 1].plot(data['t'], np.log10(diam*1e2))
+        axes[0, 1].set_ylabel('Diameter [log10(cm)]')
+        axes[1, 0].set_xlabel('Time [s]')
+
+        axes[1, 0].plot(data['t'], SNR_sim/np.max(SNR_sim), label='Estimated')
+        axes[1, 0].plot(
+            data['t'], 
+            data['SNR'].values/np.max(data['SNR'].values), 
+            'x', label='Measured',
+        )
+        axes[1, 1].plot(
+            data['t'], 
+            10*np.log10(SNR_sim/np.max(SNR_sim)), 
+            label='Estimated',
+        )
+        axes[1, 1].plot(
+            data['t'], 
+            10*np.log10(data['SNR'].values/np.max(data['SNR'].values)), 
+            'x', 
+            label='Measured',
+        )
+        axes[1, 0].legend()
+        axes[1, 1].set_xlabel('Time [s]')
+        axes[1, 0].set_ylabel('Normalized SNR [1]')
+        axes[1, 1].set_ylabel('Normalized SNR [dB]')
+        fig.savefig(results_folder / 'correlated_pass_snr_match.png')
+        plt.close(fig)
+
+        offset_angle = pyant.coordinates.vector_angle(
+             pth[:, peak_snr_id], 
+             radar.tx[0].beam.pointing, 
+             radians=False,
+        )
+        print(f'offaxis angle {offset_angle} deg')
+
+        summary_data = dict(
+            SNR_sim = SNR_sim, 
+            diam_sim = diam,
+            gain_sim = G_pth,
+            pth_sim = pth, 
+            measurement_id = meas_id,
+            object_id = obj_id,
+            offset_angle = offset_angle,
+        )
+        with open(results_folder / 'correlated_snr_prediction.pickle', 'wb') as fh:
+            pickle.dump(summary_data, fh)
+
 
 def build_predict_parser(parser):
     parser.add_argument('radar', type=str, help='The observing radar system')
     parser.add_argument('catalog', type=str, help='TLE catalog path')
-    parser.add_argument('correlation-data', type=str, help='Path to \
+    parser.add_argument('correlation_events', type=str, help='Path to \
+        correlated events')
+    parser.add_argument('correlation_data', type=str, help='Path to \
         correlation data')
-    parser.add_argument('correlation-results', type=str, help='Path to \
+    parser.add_argument('correlation_results', type=str, help='Path to \
         correlation results')
     parser.add_argument('input', type=str, help='Observation data folder, \
         expects folder with *.hlist files and an events.txt summary file.')
@@ -608,11 +843,6 @@ def build_estimate_parser(parser):
     parser.add_argument('input', type=str, help='Observation data folder, \
         expects folder with *.hlist files and an events.txt summary file.')
     parser.add_argument('output', type=str, help='Results output location')
-    parser.add_argument(
-        '-v',
-        action='store_true', 
-        help='Verbose output',
-    )
 
     parser.add_argument(
         '--matches-plotted',
@@ -689,6 +919,11 @@ def build_parser():
 
     parser = argparse.ArgumentParser(description='Analyze detailed SNR curves \
         to determine RCS and statistics')
+    parser.add_argument(
+        '-v',
+        action='store_true', 
+        help='Verbose output',
+    )
 
     subparsers = parser.add_subparsers(
         help='Available command line interfaces', 
