@@ -28,7 +28,7 @@ from discosweb_download import main as discosweb_download_main
 '''
 Example execution:
 
-./beampark_rcs_estimation.py estimate -v -n 6 \
+./beampark_rcs_estimation.py -v estimate -n 6 \
     eiscat_uhf \
     ~/data/spade/beamparks/uhf/2021.11.23/leo_bpark_2.1u_NO@uhf_extended/ \
     ./projects/output/russian_asat/2021.11.23_uhf_rcs
@@ -48,6 +48,12 @@ Example execution:
     2021.11.23_uhf_correlation.pickle,\
     2021.11.23_uhf_correlation_plots/eiscat_uhf_selected_correlations.npy,\
     2021.11.23_uhf_rcs/}
+
+./beampark_rcs_estimation.py collect -L 0.3 \
+    eiscat_uhf \
+    projects/output/russian_asat/2021_11_23_spacetrack.tle \
+    ~/data/spade/beamparks/uhf/2021.11.23/leo_bpark_2.1u_NO@uhf_extended/ \
+    ./projects/output/russian_asat/2021.11.23_uhf_rcs
 
 '''
 
@@ -696,6 +702,7 @@ def main_predict(args):
         obj_id = correlated_object_id[select_id]
         event_path = str(correlated_extended_files[select_id])
         event_name = str(correlated_extended_names[select_id])
+        event_row = event_data[event_names.index(event_name)]
         obj = pop.get_object(obj_id)
         print('Correlated TLE object for :')
         print(f' - measurement {meas_id}')
@@ -710,7 +717,10 @@ def main_predict(args):
 
         data = load_spade_extended(event_path)
 
-        radar.tx[0].beam.sph_point(azimuth=90, elevation=75)
+        radar.tx[0].beam.sph_point(
+            azimuth=event_row['AZ'].values[0], 
+            elevation=event_row['EL'].values[0],
+        )
 
         dt = (times[meas_id] - obj.epoch).sec
         peak_snr_id = np.argmax(data['SNR'].values)
@@ -824,10 +834,6 @@ def main_predict(args):
             pickle.dump(summary_data, fh)
 
 
-def main_collect(args):
-    pass
-
-
 def main_discos(args):
 
     tle_pth = Path(args.catalog).resolve()
@@ -873,10 +879,12 @@ def main_discos(args):
 
     output_data = {
         key: np.empty((len(discos_data), ), dtype=np.float64)
-        for key in ['oid', 'min_area', 'avg_area', 'max_area', 'diam']
+        for key in ['measurnment_id', 'oid', 'min_area', 'avg_area', 'max_area', 'diam']
     }
     for ind, obj in enumerate(discos_data):
         output_data['oid'][ind] = obj['attributes']['satno']
+        mid = oids.index(int(obj['attributes']['satno']))
+        output_data['measurnment_id'][ind] = measurnment_id[mid]
         
         for data_key, discos_key in zip(
                     ['min_area', 'avg_area', 'max_area', 'diam'], 
@@ -887,6 +895,147 @@ def main_discos(args):
 
     print('Writing object size data...')
     np.savez(output_data_file, **output_data)
+
+
+def area_to_diam(A):
+    return np.sqrt(A/np.pi)*2
+
+
+def main_collect(args):
+    radar = getattr(sorts.radars, args.radar)
+
+    # TODO This is hardcoded for now
+    radar.tx[0].beam.sph_point(
+        azimuth=90, 
+        elevation=75,
+    )
+
+    data_pth = Path(args.data).resolve()
+    input_pth = Path(args.input).resolve()
+    tle_pth = Path(args.catalog).resolve()
+
+    data_pths = list(data_pth.rglob('*.hlist'))
+    event_names = [x.stem for x in data_pths]
+
+    discos_file = input_pth / 'discos_object_sizes.npz'
+    discos_data = np.load(discos_file)
+
+    collected_file = input_pth / 'collected_results.pickle'
+
+    pop = sorts.population.tle_catalog(tle_pth, cartesian=False)
+    pop.unique()
+
+    num = len(event_names)
+
+    _init_array = np.full((num,), np.nan, dtype=np.float64)
+    summary_data = {
+        'measurnment_id': _init_array.copy(),
+        'event_name': event_names,
+        'correlated': np.full((num,), False, dtype=bool),
+        'object_id': _init_array.copy(),
+        'norad_id': _init_array.copy(),
+        'SNR': _init_array.copy(),
+        'range': _init_array.copy(),
+        'doppler': _init_array.copy(),
+        'estimated_offset_angle': _init_array.copy(),
+        'estimated_diam': _init_array.copy(),
+        'estimated_min_diam': _init_array.copy(),
+        'estimated_max_diam': _init_array.copy(),
+        'estimated_gain': _init_array.copy(),
+        'proxy_d_inc': _init_array.copy(),
+        'proxy_d_anom': _init_array.copy(),
+        'predicted_offset_angle': _init_array.copy(),
+        'predicted_diam': _init_array.copy(),
+        'predicted_gain': _init_array.copy(),
+        'discos_diam': _init_array.copy(),
+        'discos_avg_diam': _init_array.copy(),
+        'discos_min_diam': _init_array.copy(),
+        'discos_max_diam': _init_array.copy(),
+    }
+
+    for ev_id in tqdm(range(num)):
+        event_name = event_names[ev_id]
+
+        results_folder = input_pth / event_name
+        match_file = results_folder / f'{event_name}_results.pickle'
+        predict_file = results_folder / 'correlated_snr_prediction.pickle'
+        
+        if not match_file.is_file():
+            continue
+
+        data = load_spade_extended(data_pths[ev_id])
+        snr_max = np.argmax(data['SNR'].values)
+
+        with open(match_file, 'rb') as fh:
+            match_data = pickle.load(fh)
+        if predict_file.is_file():
+            with open(predict_file, 'rb') as fh:
+                predict_data = pickle.load(fh)
+        else:
+            predict_data = None
+
+        summary_data['SNR'][ev_id] = data['SNR'].values[snr_max]
+        summary_data['range'][ev_id] = data['r'].values[snr_max]*1e3
+        summary_data['doppler'][ev_id] = data['v'].values[snr_max]*1e3
+
+        summary_data['proxy_d_inc'][ev_id] = match_data['best_inc']
+        summary_data['proxy_d_anom'][ev_id] = match_data['best_anom']
+        
+        summary_data['estimated_offset_angle'][ev_id] = match_data['best_offaxis'][0]
+        summary_data['estimated_diam'][ev_id] = match_data['best_diams'][0]
+        summary_data['estimated_gain'][ev_id] = match_data['best_gains'][0]
+
+        match_limit = np.percentile(match_data['best_matches'], args.match_limit_percentile)
+        probable_matches = match_data['best_matches'] > match_limit
+        probable_diams = match_data['best_diams'][probable_matches]
+
+        summary_data['estimated_min_diam'][ev_id] = np.min(probable_diams)
+        summary_data['estimated_max_diam'][ev_id] = np.max(probable_diams)
+
+        if predict_data is not None:
+
+            summary_data['correlated'][ev_id] = True
+            summary_data['measurnment_id'][ev_id] = predict_data['measurement_id']
+            summary_data['object_id'][ev_id] = predict_data['object_id']
+            summary_data['norad_id'][ev_id] = pop['oid'][predict_data['object_id']]
+            
+            summary_data['predicted_offset_angle'][ev_id] = predict_data['offset_angle']
+            summary_data['predicted_diam'][ev_id] = predict_data['diam_sim'][snr_max]
+            summary_data['predicted_gain'][ev_id] = predict_data['gain_sim'][snr_max]
+            
+            discos_row = np.argwhere(
+                discos_data['measurnment_id'] == predict_data['measurement_id']
+            )
+            discos_row = discos_row.flatten()
+            if len(discos_row) > 0:
+                discos_row = discos_row[0]
+
+                summary_data['discos_diam'][ev_id] = area_to_diam(discos_data['diam'][discos_row])
+                summary_data['discos_avg_diam'][ev_id] = area_to_diam(discos_data['avg_area'][discos_row])
+                summary_data['discos_min_diam'][ev_id] = area_to_diam(discos_data['min_area'][discos_row])
+                summary_data['discos_max_diam'][ev_id] = area_to_diam(discos_data['max_area'][discos_row])
+
+            fig, ax = plt.subplots(figsize=(12, 8))
+            ax.plot(
+                match_data['best_path'][0, :], 
+                match_data['best_path'][1, :], 
+                '-r', 
+                label='estimated path',
+            )
+            ax.plot(
+                predict_data['pth_sim'][0, :], 
+                predict_data['pth_sim'][1, :], 
+                '-g', 
+                label='predicted path',
+            )
+            ax.legend()
+            pyant.plotting.gain_heatmap(radar.tx[0].beam, min_elevation=85.0, ax=ax)
+
+            fig.savefig(results_folder / 'compare_pass_pth_gain.png')
+            plt.close(fig)
+
+    with open(collected_file, 'wb') as fh:
+        pickle.dump(summary_data, fh)
 
 
 def build_predict_parser(parser):
@@ -906,10 +1055,19 @@ def build_predict_parser(parser):
 
 
 def build_collect_parser(parser):
+    parser.add_argument('radar', type=str, help='The observing radar system')
+    parser.add_argument('catalog', type=str, help='TLE catalog path')
+    parser.add_argument('data', type=str, help='Observation data folder, \
+        expects folder with *.hlist files and an events.txt summary file.')
     parser.add_argument('input', type=str, help='Results output location to \
-        collect results from')
-    parser.add_argument('output', type=str, help='Folder to save collection \
-        output to')
+        collect results from, summary is also saved here')
+    parser.add_argument(
+        '-L', '--match-limit-percentile',
+        default=0.3,
+        metavar='LIMIT',
+        type=float, 
+        help='Percentile of matches at which to consider matches as probable',
+    )
     return parser
 
 
@@ -1032,13 +1190,13 @@ def build_parser():
         values for target using correlation and TLE.')
     predict_parser = build_predict_parser(predict_parser)
 
-    collect_parser = subparsers.add_parser('collect', help='Collect RCS \
-        statistics from "estimate" and "predict"')
-    collect_parser = build_collect_parser(collect_parser)
-
     discos_parser = subparsers.add_parser('discos', help='Fetch size \
         data for all correlated objects from DISCOSweb')
     discos_parser = build_discos_parser(discos_parser)
+
+    collect_parser = subparsers.add_parser('collect', help='Collect RCS \
+        statistics from "estimate" and "predict"')
+    collect_parser = build_collect_parser(collect_parser)
 
     return parser
 
