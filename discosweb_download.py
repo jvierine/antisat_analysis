@@ -32,7 +32,7 @@ def main(input_args=None):
     )
     parser.add_argument(
         '--secret-tool-key', '-k', nargs=1, type=str, metavar='KEY',
-        help='Attribute value (key) to fetch secret from',
+        help='Attribute [named "token"] value [key] to fetch secret from',
     )
     parser.add_argument(
         '--credentials', '-c', nargs=1, metavar='FILE',
@@ -71,9 +71,10 @@ def main(input_args=None):
 
     oids = ','.join(args.object_id)
     if len(args.object_id) == 1:
-        oids += ','
+        filt_str = f"{_ID_MAP[args.type]}={oids}"
+    else:
+        filt_str = f"in({_ID_MAP[args.type]},({oids}))"
 
-    filt_str = f"in({_ID_MAP[args.type]},({oids}))"
     print(f'Fetching data for "{filt_str}"')
 
     response = requests.get(
@@ -89,7 +90,7 @@ def main(input_args=None):
 
     doc = response.json()
     if response.ok:
-        print(f'{len(doc)} Entries found...')
+        print(f"{len(doc['data'])} Entries found...")
         json.dump(doc['data'], args.output, indent=2)
     else:
         print('Error...')
