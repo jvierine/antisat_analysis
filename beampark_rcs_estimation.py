@@ -4,6 +4,7 @@
 from pathlib import Path
 import pickle
 import argparse
+import json
 
 import numpy as np
 import pandas as pd
@@ -22,6 +23,8 @@ from convert_spade_events_to_h5 import get_spade_data
 from convert_spade_events_to_h5 import read_spade, date2unix
 from convert_spade_events_to_h5 import MIN_SNR
 
+from discosweb_download import main as discosweb_download_main
+
 '''
 Example execution:
 
@@ -38,6 +41,13 @@ Example execution:
     2021.11.23_uhf_correlation_plots/eiscat_uhf_selected_correlations.npy} \
     ~/data/spade/beamparks/uhf/2021.11.23/leo_bpark_2.1u_NO@uhf_extended/ \
     projects/output/russian_asat/2021.11.23_uhf_rcs
+
+./beampark_rcs_estimation.py discos -k discos \
+    projects/output/russian_asat/{\
+    2021_11_23_spacetrack.tle,\
+    2021.11.23_uhf_correlation.pickle,\
+    2021.11.23_uhf_correlation_plots/eiscat_uhf_selected_correlations.npy,\
+    2021.11.23_uhf_rcs/}
 
 '''
 
@@ -601,7 +611,7 @@ def main_predict(args):
     G_db_lim = 1
     est_diam = 1e0
 
-    tle_pth = None if len(args.catalog) == 0 else Path(args.catalog).resolve()
+    tle_pth = Path(args.catalog).resolve()
     output_pth = Path(args.output).resolve()
     input_pth = Path(args.input).resolve()
     corr_events = Path(args.correlation_events).resolve()
@@ -814,6 +824,71 @@ def main_predict(args):
             pickle.dump(summary_data, fh)
 
 
+def main_collect(args):
+    pass
+
+
+def main_discos(args):
+
+    tle_pth = Path(args.catalog).resolve()
+    corr_pth = Path(args.correlation_data).resolve()
+    corr_select_pth = Path(args.correlation_results).resolve()
+    
+    output_pth = Path(args.output).resolve()
+    output_pth.mkdir(exist_ok=True, parents=True)
+    output_discos = output_pth / 'discos_entires.json'
+    output_data_file = output_pth / 'discos_object_sizes.npz'
+
+    correlation_select = np.load(corr_select_pth)
+
+    with h5py.File(corr_pth, 'r') as ds:
+        indecies = ds['matched_object_index'][()][0, :]
+        measurnment_id = ds['observation_index'][()]
+        indecies = indecies[measurnment_id]
+        measurnment_id = np.arange(len(measurnment_id))
+
+    indecies = indecies[correlation_select]
+    measurnment_id = measurnment_id[correlation_select]
+
+    print('Loading population...')
+    pop = sorts.population.tle_catalog(tle_pth, cartesian=False)
+    pop.unique()
+
+    oids = pop['oid'][indecies].tolist()
+
+    if not output_discos.is_file() or args.clobber:
+        print(f'Fetching data on {len(oids)} objects...')
+        discos_args = [
+            '--secret-tool-key', args.secret_tool_key,
+            '--output', str(output_discos),
+        ]
+        discos_args += [str(x) for x in oids]
+        print(' '.join(discos_args))
+        discosweb_download_main(discos_args)
+
+    print('Loading discos data...')
+    assert output_discos.is_file(), f'Something went wrong, "{output_discos}" does not exist'
+    with open(output_discos, 'r') as fh:
+        discos_data = json.load(fh)
+
+    output_data = {
+        key: np.empty((len(discos_data), ), dtype=np.float64)
+        for key in ['oid', 'min_area', 'avg_area', 'max_area', 'diam']
+    }
+    for ind, obj in enumerate(discos_data):
+        output_data['oid'][ind] = obj['attributes']['satno']
+        
+        for data_key, discos_key in zip(
+                    ['min_area', 'avg_area', 'max_area', 'diam'], 
+                    ['xSectMin', 'xSectAvg', 'xSectMax', 'diameter'], 
+                ):
+            val = obj['attributes'][discos_key]
+            output_data[data_key][ind] = val if val is not None else np.nan
+
+    print('Writing object size data...')
+    np.savez(output_data_file, **output_data)
+
+
 def build_predict_parser(parser):
     parser.add_argument('radar', type=str, help='The observing radar system')
     parser.add_argument('catalog', type=str, help='TLE catalog path')
@@ -915,6 +990,24 @@ def build_estimate_parser(parser):
     return parser
 
 
+def build_discos_parser(parser):
+    parser.add_argument('catalog', type=str, help='TLE catalog path')
+    parser.add_argument('correlation_data', type=str, help='Path to \
+        correlation data')
+    parser.add_argument('correlation_results', type=str, help='Path to \
+        correlation results')
+    parser.add_argument('output', type=str, help='Results output location')
+    parser.add_argument(
+        '--secret-tool-key', '-k', type=str, metavar='KEY',
+        help='Attribute value (key) to fetch secret from',
+    )
+    parser.add_argument(
+        '-c', '--clobber', 
+        action='store_true', 
+        help='Override output location if it exists',
+    )
+
+
 def build_parser():
 
     parser = argparse.ArgumentParser(description='Analyze detailed SNR curves \
@@ -943,6 +1036,10 @@ def build_parser():
         statistics from "estimate" and "predict"')
     collect_parser = build_collect_parser(collect_parser)
 
+    discos_parser = subparsers.add_parser('discos', help='Fetch size \
+        data for all correlated objects from DISCOSweb')
+    discos_parser = build_discos_parser(discos_parser)
+
     return parser
 
 
@@ -961,7 +1058,9 @@ def main(input_args=None):
     elif args.command == 'predict':
         main_predict(args)
     elif args.command == 'collect':
-        pass
+        main_collect(args)
+    elif args.command == 'discos':
+        main_discos(args)
 
 
 if __name__ == '__main__':
