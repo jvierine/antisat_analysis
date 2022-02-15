@@ -21,26 +21,26 @@ def main(input_args=None):
         description='Download size information from discosweb',
     )
     parser.add_argument(
-        'object_id', metavar='ID', type=str, 
-        help='Input ID, ID variant can be set with "--type"',
-    )
-    parser.add_argument(
         '-t', '--type', type=str, default='NORAD',
         choices = ['NORAD', 'COSPAR', 'DISCOS'],
         help='Input ID, ID variant can be set with "--type"',
     )
     parser.add_argument(
-        'output', nargs='?', type=argparse.FileType('w'), default=sys.stdout,
+        '-o', '--output', 
+        nargs='?', type=argparse.FileType('w'), default=sys.stdout,
         help = 'Path to file where output should be written.'
     )
-    parser.add_argument('--secret-tool-key', '-k', nargs=1)
     parser.add_argument(
-        '--credentials', '-c', nargs=1, 
+        '--secret-tool-key', '-k', nargs=1, type=str, metavar='KEY',
+        help='Attribute value (key) to fetch secret from',
+    )
+    parser.add_argument(
+        '--credentials', '-c', nargs=1, metavar='FILE',
         help='File containing DISCOSweb token',
     )
     parser.add_argument(
-        '--name', '-n', default=None, 
-        help='Name of the object to match with the "like" operator',
+        'object_id', metavar='ID', type=str, nargs='+',
+        help='Input ID(s), ID variant can be set with "--type"',
     )
 
     if input_args is None:
@@ -49,10 +49,14 @@ def main(input_args=None):
         args = parser.parse_args(input_args)
 
     if args.type == 'NORAD':
-        if args.object_id[-1].isalpha():
-            args.object_id = args.object_id[:-1]
+        tmp_oids = []
+        for oid in args.object_id:
+            oid = oid[:-1] if oid[-1].isalpha() else oid
+            tmp_oids.append(oid)
+        args.object_id = tmp_oids
+
     elif args.type == 'COSPAR':
-        args.object_id = f"'{args.object_id}'"
+        args.object_id = [f"'{oid}'" for oid in args.object_id]
     
     if args.secret_tool_key is not None:
         res = subprocess.run(
@@ -65,7 +69,11 @@ def main(input_args=None):
     else:
         token = getpass.getpass("API token for:")
 
-    filt_str = f"{_ID_MAP[args.type]}={args.object_id}"
+    oids = ','.join(args.object_id)
+    if len(args.object_id) == 1:
+        oids += ','
+
+    filt_str = f"in({_ID_MAP[args.type]},({oids}))"
     print(f'Fetching data for "{filt_str}"')
 
     response = requests.get(
@@ -78,27 +86,6 @@ def main(input_args=None):
             'filter': filt_str,
         },
     )
-
-    # Mass
-    # 3964.32 kg
-    # Shape
-    # Cyl
-    # Width
-    # –
-    # Height
-    # 28 m
-    # Depth
-    # –
-    # Diameter
-    # 2.6 m
-    # Span
-    # 28 m
-    # Max. cross section
-    # 72.9933461154505 m²
-    # Min. cross section
-    # 5.30929158456675 m²
-    # Avg. cross section
-    # 59.8316320876176 m²
 
     doc = response.json()
     if response.ok:
