@@ -176,38 +176,82 @@ def wrapped_evaluate_sample(f_args):
     return evaluate_sample(*f_args)
 
 
+def plot_selection(ax, x, y, selector, styles, labels=None, colors=None):
+    not_selector = np.logical_not(selector)
+    x_sel = np.copy(x)
+    x_sel[not_selector] = np.nan
+    x_not_sel = np.copy(x)
+    x_not_sel[selector] = np.nan
+    y_sel = np.copy(y)
+    y_sel[not_selector] = np.nan
+    y_not_sel = np.copy(y)
+    y_not_sel[selector] = np.nan
+
+    if isinstance(styles, str):
+        styles = [styles, styles]
+    if isinstance(labels, str):
+        labels = [labels, labels]
+
+    sel_kw = {}
+    not_sel_kw = {}
+    if labels is not None:
+        if labels[0] is not None:
+            sel_kw['label'] = labels[0]
+        if labels[1] is not None:
+            not_sel_kw['label'] = labels[1]
+    if labels is not None:
+        if colors[0] is not None:
+            sel_kw['color'] = colors[0]
+        if colors[1] is not None:
+            not_sel_kw['color'] = colors[1]
+
+    ax.plot(x_sel, y_sel, styles[0], **sel_kw)
+    ax.plot(x_not_sel, y_not_sel, styles[1], **not_sel_kw)
+
+    return ax
+
+
 def plot_match(
             data, mch_ind, diams, 
             t_, dt, use_data, 
-            not_use_data, sn_s, sn_m, 
+            sn_s, sn_m, gain,
             mch_rank, results_folder, radar, 
             pths,
         ):
-    fig, axes = plt.subplots(2, 2, figsize=(16, 8), sharex=True)
+    fig, axes = plt.subplots(2, 3, figsize=(16, 8), sharex=True)
     ax2 = axes[0, 0].twinx()
     axes[0, 0].plot(data['t'], diams[mch_ind]*1e2, '-b')
     axes[0, 0].set_ylabel('Diameter [cm]', color='b')
     ax2.plot(
         data['t'][np.abs(t_) < dt], 
         diams[mch_ind][np.abs(t_) < dt]*1e2, 
-        '-g',
+        'xg',
     )
     ax2.set_ylabel('Diameter around peak SNR [cm]', color='g')
 
-    axes[0, 1].plot(
-        data['t'][use_data], 
-        np.log10(diams[mch_ind][use_data]*1e2),
-        label='Used measurements'
-    )
-    axes[0, 1].plot(
-        data['t'][not_use_data], 
-        np.log10(diams[mch_ind][not_use_data]*1e2),
-        label='Not used measurements'
+    plot_selection(
+        ax=axes[0, 1], 
+        x=data['t'].values, 
+        y=np.log10(diams[mch_ind]*1e2), 
+        selector=use_data, 
+        styles=['-', '--'], 
+        labels=['Used measurements', 'Not used measurements'], 
     )
     axes[0, 1].legend()
     axes[0, 1].set_ylabel('Diameter [log10(cm)]')
 
     axes[1, 0].set_xlabel('Time [s]')
+
+    plot_selection(
+        ax=axes[1, 0], 
+        x=data['t'].values, 
+        y=sn_s, 
+        selector=use_data, 
+        styles=['-', '--'], 
+        labels=['Estimated', None], 
+        colors='b',
+    )
+
     axes[1, 0].plot(
         data['t'][use_data], sn_s[use_data], 
         '-', color='b', label='Estimated')
@@ -232,8 +276,23 @@ def plot_match(
     axes[1, 1].plot(
         data['t'][not_use_data], 10*np.log10(sn_m)[not_use_data], 
         '--', color='r')
+    axes[0, 2].plot(
+        data['t'][use_data], 10*np.log10(data['SNR'])[use_data], 
+        '-', color='b')
+    axes[0, 2].plot(
+        data['t'][not_use_data], 10*np.log10(data['SNR'])[not_use_data], 
+        '--', color='b')
+    axes[1, 2].plot(
+        data['t'][use_data], gain[use_data], 
+        '-', color='b')
+    axes[1, 2].plot(
+        data['t'][not_use_data], gain[not_use_data], 
+        '--', color='b')
     axes[1, 0].legend()
     axes[1, 1].set_xlabel('Time [s]')
+    axes[1, 2].set_xlabel('Time [s]')
+    axes[0, 2].set_ylabel('Measured SNR [dB]')
+    axes[1, 2].set_ylabel('Estimated Gain [dB]')
     axes[1, 0].set_ylabel('Normalized SNR [1]')
     axes[1, 1].set_ylabel('Normalized SNR [dB]')
     fig.savefig(results_folder / f'match{mch_rank}_data.png')
@@ -576,7 +635,7 @@ def main_estimate(args):
             plot_match(
                 data, mch_ind, diams, 
                 t_, dt, use_data, 
-                not_use_data, sn_s, sn_m, 
+                not_use_data, sn_s, sn_m, gains[mch_ind],
                 mch_rank, results_folder, radar, 
                 pths,
             )
@@ -585,7 +644,7 @@ def main_estimate(args):
         plot_match(
             data, orig, diams, 
             t_, dt, use_data, 
-            not_use_data, sn_s, sn_m, 
+            not_use_data, sn_s, sn_m, gains[orig],
             np.argwhere(best_matches_inds == orig).flatten()[0], 
             results_folder, radar, pths,
         )
@@ -985,7 +1044,7 @@ def main_collect(args):
         summary_data['estimated_diam'][ev_id] = match_data['best_diams'][0]
         summary_data['estimated_gain'][ev_id] = match_data['best_gains'][0]
 
-        match_limit = np.percentile(match_data['best_matches'], args.match_limit_percentile)
+        match_limit = np.percentile(match_data['best_matches'], 100 - args.match_limit_percentile)
         probable_matches = match_data['best_matches'] > match_limit
         probable_diams = match_data['best_diams'][probable_matches]
 
