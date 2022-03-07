@@ -9,6 +9,8 @@ import subprocess
 import codecs
 import spacetrack 
 
+# Getting Kosmos-1408 fragment list using
+# https://www.space-track.org/basicspacedata/query/class/tle_latest/OBJECT_ID/~~1982-092/orderby/ORDINAL%20asc/format/3le/emptyresult/show
 
 _iso_fmt = '%Y-%m-%d'
 _td_regx = re.compile(r'^((?P<days>[\.\d]+?)d)? *((?P<hours>[\.\d]+?)h)? ' +
@@ -115,3 +117,4 @@ def main(input_args=None):
 
 if __name__ == '__main__':
     main()
+
