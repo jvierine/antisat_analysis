@@ -431,7 +431,7 @@ def main_estimate(args):
         orb = pyorb.Orbit(
             M0=pyorb.M_earth, m=0, 
             num=1, epoch=mock_epoch, 
-            radians=False,
+            degrees=True,
         )
         orb.a = np.linalg.norm(r_ecef)
         orb.e = 0
