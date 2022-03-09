@@ -38,7 +38,7 @@ print(f'Using {OUTPUT} as output')
 
 
 with open(OUTPUT / 'paths.pickle', 'rb') as fh:
-    paths = paths = pickle.load(fh)
+    paths = pickle.load(fh)
 
 
 # ## Compile kosmos-1408 list
