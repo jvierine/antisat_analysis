@@ -78,7 +78,7 @@ from sorts.population import tles
 
 cache_dir = Path('../cache')
 
-if 1:
+if 0:
     site = 'eiscat_uhf'
     date = '2021.11.23'
     kdate = '2021.12.27'    # Date of kosmos-debris catalogue download
@@ -139,13 +139,13 @@ for obs_ix in range(n_obs):
     # bix = bobj_ix[bpop_id]
     # kix = kobj_ix[kpop_id]
 
-    bmval = bcor['matched_object_metric'][0, obs_ix]
+    bmval = bcor['matched_object_metric'][0, obs_ix]    # Gives a structured numpy array
     kmval = kcor['matched_object_metric'][0, obs_ix]
 
     # b_err = np.hypot(*bmval)
     # k_err = np.hypot(*kmval)
-    b_err = np.hypot(bmval[0]/15e3, bmval[1]/1e3)
-    k_err = np.hypot(kmval[0]/15e3, kmval[1]/1e3)
+    b_err = np.hypot(bmval['dr']/5e3, bmval['dv']/5e2)
+    k_err = np.hypot(kmval['dr']/5e3, kmval['dv']/5e2)
 
     if np.isnan(b_err) and np.isnan(k_err):
         # uncorrelated
