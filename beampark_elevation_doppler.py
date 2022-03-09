@@ -1,6 +1,19 @@
 #!/usr/bin/env python
 
+'''
+Example execution 
+
+RUN:
+
+PLOT:
+
+./beampark_elevation_doppler.py plot cache/**/az*.h5 -o ./plots/
+./beampark_elevation_doppler.py plot -d /home/danielk/data/spade/beamparks/uhf/2021.11.23.h5 -o ./plots/ -- ./cache/eiscat_uhf/az90.0_el75.0.h5
+
+'''
+
 import sys
+import datetime
 import argparse
 from pathlib import Path
 
@@ -555,6 +568,62 @@ def plot_from_cachefile(cachefilename, incl=None, linestyles=None, symb=None, cm
             return lh, lab
 
 
+def unix2datestr(x):
+    d0 = np.floor(x/60.0)
+    frac = x-d0*60.0
+    stri = datetime.datetime.utcfromtimestamp(x).strftime('%Y-%m-%d %H:%M:')
+    return "%s%02.2f" % (stri, frac)
+
+
+def plot_with_measurement_data(
+            data_fname, 
+            cache_fname, 
+            site='unknown', 
+            date='', 
+            out_path=None, 
+            out_name='',
+        ):
+
+    with h5py.File(data_fname, "r") as h:
+        v = h["v"][()]*1e3
+        rgs = h["r"][()]*1e3
+    
+    pincs = np.array([70, 74, 82, 87, 90, 95, 99, 102])
+
+    fig = plt.figure(figsize=(10, 8))
+
+    # info on i and a
+    H, x, y = np.histogram2d(v, rgs, range=[[-3e3, 3e3], [0, 3000e3]], bins=(100, 100))
+    
+    plt.subplot(121)
+    plot_from_cachefile(cache_fname, incl=pincs)
+
+    cdops = np.copy(v)
+    cdops[cdops > 4] = 4e3
+    cdops[cdops < -4] = -4e3
+
+    plt.scatter(rgs, v, s=1, c="black", lw=0, cmap="Spectral")
+    plt.title("Detections")
+    plt.ylim([-2.5e3, 2.5e3])
+
+    plt.subplot(122)
+    plot_from_cachefile(cache_fname, incl=pincs, legend=False)
+
+    plt.pcolormesh(y, x, H)
+    plt.title("Histogram")
+    plt.ylabel("")
+
+    plt.colorbar()
+    fig.suptitle(f'Observations at {site} {date}')
+    plt.tight_layout()
+    
+    if out_path is None:
+        plt.show()
+    else:
+        fig.savefig(out_path / ('r_dr_meas_' + out_name))
+        plt.close(fig)
+    
+
 def draw_annotated_maps(cachefilename, station, ii, kk, ah=None):
 
     with h5py.File(cachefilename, 'r') as ds:
@@ -845,7 +914,7 @@ def do_create_demoplots():
     plt.savefig('Om_nu_figure_esr_north.png')
 
 
-def main():
+def main(input_args=None):
 
     parser = argparse.ArgumentParser(description='Calculate doppler-inclination correlation for a beampark')
 
@@ -859,11 +928,22 @@ def main():
     parser_run.add_argument('-d', '--dry-run', action='store_true', help='Do not actually write to file')
 
     parser_plot = subparsers.add_parser('plot', help='Plot results from cache')
-    parser_plot.add_argument('cache', type=str, help='Path to cache file to plot')
+    parser_plot.add_argument('cache', type=str, nargs='+', help='Path(s) to cache file to plot')
+    parser_plot.add_argument('-o', '--output', type=str, default=None, help='Directory to save plots in')
+    parser_plot.add_argument(
+        '-d', '--data', 
+        type=str, 
+        default=None, 
+        nargs='+', 
+        help='Paths to measurement data to plot alongside cache results',
+    )
 
     parser_demo = subparsers.add_parser('demo', help='Do predefined demo plotting')
 
-    args = parser.parse_args()
+    if input_args is None:
+        args = parser.parse_args()
+    else:
+        args = parser.parse_args(input_args)
 
     if args.command == 'run':
 
@@ -876,10 +956,45 @@ def main():
                         degrees=True, clobber=args.clobber, dry_run=args.dry_run)
     elif args.command == 'plot':
 
-        fig = plt.figure()
-        plot_from_cachefile(args.cache)
-        fig_name = Path(args.cache).stem
-        plt.savefig(f'new_cache_figure_{fig_name}.png')
+        for cache in args.cache:
+            print(f'Plotting {cache}...')
+            with h5py.File(cache, 'r') as ds:
+                radar_name = ds.attrs['radar_name']
+
+            fig = plt.figure()
+            plot_from_cachefile(cache)
+            fig_name = Path(cache).stem
+            fout = f'{radar_name}_cache_{fig_name}.png'
+            if args.output is not None:
+                fout = str(Path(args.output).resolve() / fout)
+            fig.savefig(fout)
+            plt.close(fig)
+        if args.data is not None:
+            for cache, data in zip(args.cache, args.data):
+                print(f'Plotting {cache} + {data}...')
+                
+                with h5py.File(cache, 'r') as ds:
+                    radar_name = ds.attrs['radar_name']
+
+                with h5py.File(data, 'r') as ds:
+                    date = Time(np.min(ds["t"]), format='unix', scale='utc')
+                
+                if args.output is None:
+                    out_path = Path('.')
+                else:
+                    out_path = Path(args.output).resolve()
+                fout = f'{radar_name}_cache_{Path(cache).stem}.png'
+
+                plot_with_measurement_data(
+                    Path(data).resolve(), 
+                    Path(cache).resolve(), 
+                    velmin=-2.3, 
+                    velmax=2.3, 
+                    site=radar_name, 
+                    date=date, 
+                    out_path=out_path, 
+                    out_name=fout,
+                )
 
     elif args.command == 'demo':
         do_create_demoplots()

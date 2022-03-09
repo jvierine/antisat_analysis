@@ -92,14 +92,14 @@ def ecef2geodetic(x, y, z):
     lon = arctan2(y, x)
     return(array([degrees(lat), degrees(lon), h]))
 
-def geodetic_to_az_el_r(obs_lat, obs_lon, obs_h, target_lat, target_lon, target_h):
-    """ When given a observer lat,long,h and target lat,long,h, provide azimuth, elevation, and range to target """
+def ecef_to_az_el_r(obs_lat, obs_lon, obs_h, target_ecef):
+    """ When given a observer lat,long,h and target in ECEF provide azimuth, elevation, and range to target """
+
     up = ned2ecef(obs_lat, obs_lon, obs_h, 0.0, 0.0, -1.0)
     north = ned2ecef(obs_lat, obs_lon, obs_h, 1.0, 0.0, 0.0)
     east = ned2ecef(obs_lat, obs_lon, obs_h, 0.0, 1.0, 0.0)
     obs = array(geodetic2ecef(obs_lat, obs_lon, obs_h))
-    target = array(geodetic2ecef(target_lat, target_lon, target_h))
-    p_vec = (target-obs)
+    p_vec = (target_ecef-obs)
     az_p = dot(p_vec,north)*north+dot(p_vec,east)*east
     azs = sign(dot(p_vec,east))
     
@@ -108,6 +108,11 @@ def geodetic_to_az_el_r(obs_lat, obs_lon, obs_h, target_lat, target_lon, target_
     target_range = sqrt(dot(p_vec,p_vec))
     
     return(array([azimuth, elevation, target_range]))
+
+def geodetic_to_az_el_r(obs_lat, obs_lon, obs_h, target_lat, target_lon, target_h):
+    """ When given a observer lat,long,h and target lat,long,h, provide azimuth, elevation, and range to target """
+    target_ecef = geodetic2ecef(target_lat, target_lon, target_h)
+    return ecef_to_az_el_r(obs_lat, obs_lon, obs_h, target_ecef)
 
 def az_el_r2geodetic(obs_lat, obs_lon, obs_h, az, el, r):
     """ When given a observer lat,long,h and az,el and r, return lat,long,h of target """

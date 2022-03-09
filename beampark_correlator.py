@@ -18,10 +18,23 @@ import sorts
 '''
 Examples:
 
-python beampark_correlator.py eiscat_uhf ~/data/spade/beamparks/uhf/2015.10.22/space-track.tles ~/data/spade/beamparks/uhf/2015.10.22/h5 ~/data/spade/beamparks/uhf/2015.10.22/correlation.pickle
-mpirun -n 6 ./beampark_correlator.py eiscat_uhf ~/data/spade/beamparks/uhf/2015.10.22/space-track.tles ~/data/spade/beamparks/uhf/2015.10.22/h5 ~/data/spade/beamparks/uhf/2015.10.22/correlation.pickle -c
+python beampark_correlator.py eiscat_uhf \
+    ~/data/spade/beamparks/uhf/2015.10.22/space-track.tles \
+    ~/data/spade/beamparks/uhf/2015.10.22/leo.h5 \
+    ~/data/spade/beamparks/uhf/2015.10.22/correlation.pickle
+
+mpirun -n 6 \
+    ./beampark_correlator.py eiscat_uhf \
+    ~/data/spade/beamparks/uhf/2015.10.22/space-track.tles \
+    ~/data/spade/beamparks/uhf/2015.10.22/leo.h5 \
+    ~/data/spade/beamparks/uhf/2015.10.22/correlation.pickle -c
+
 mpirun -n 6 ./beampark_correlator.py eiscat_esr ~/data/spade/beamparks/esr/2021.11.23/{space-track.tles,leo.h5,correlation.h5} -c
 '''
+
+# dtype for residuals
+res_t = np.dtype([('dr', np.float64), ('dv', np.float64), ('metric', np.float64), ('jitter_index', np.float64)])
+t_jitter = np.linspace(-5, 5, num=11)
 
 try:
     from mpi4py import MPI
@@ -30,70 +43,98 @@ except ImportError:
     comm = None
 
 
+def default_propagation_handling(obj, t, t_measurement_indices, measurements):
+    states = obj.get_state(t)
+    return states
+
+
+def jitter_propagation_handling(obj, t, t_measurement_indices, measurements):
+    t_get = t[:, None] + t_jitter[None, :]
+
+    ret_shape = t_get.shape
+    t_get.shape = (t_get.size, )
+
+    states = obj.get_state(t_get)
+    states.shape = (6, ) + ret_shape
+
+    return states
+
+
 def vector_diff_metric(t, r, v, r_ref, v_ref, **kwargs):
     '''Return a vector of residuals for range and range rate.
     '''
-    ret = np.empty((len(t),), dtype=[('dr', np.float64), ('dv', np.float64)])
-    ret['dr'] = r_ref - r
-    ret['dv'] = v_ref - v
+    r_std = kwargs.get('r_std', None)
+    v_std = kwargs.get('v_std', None)
+
+    index_tuple = (slice(None), ) + tuple(None for x in range(len(r_ref.shape) - 1))
+
+    base_shape = r_ref.shape
+
+    ret = np.empty(base_shape, dtype=res_t)
+    ret['dr'] = r_ref - r[index_tuple]
+    ret['dv'] = v_ref - v[index_tuple]
+    if r_std is not None:
+        ret['dr'] /= r_std[index_tuple]
+        ret['dv'] /= v_std[index_tuple]
+
+    ret['metric'] = np.hypot(
+        ret['dr']/kwargs['dr_scale'],
+        ret['dv']/kwargs['dv_scale'],
+    )
+
+    # Reduce jitter if it exists
+    if len(base_shape) > 1:
+        ret.shape = (base_shape[0], np.prod(base_shape[1:]))
+        inds = np.argmin(ret['metric'], axis=1)
+        ret = ret[np.arange(base_shape[0]), inds]
+        ret['jitter_index'] = inds
+    else:
+        ret['jitter_index'] = np.nan
+
     return ret
 
 
-def vector_diff_metric_std_normalized(t, r, v, r_ref, v_ref, **kwargs):
-    '''Return a vector of measurnment error scaled residuals for range and range rate.
-    '''
-    r_std = kwargs.get('r_std')
-    v_std = kwargs.get('v_std')
-    dr = (r_ref - r)/r_std
-    dv = (v_ref - v)/v_std
-    
-    ret = np.empty((len(t),), dtype=[('dr', np.float64), ('dv', np.float64)])
-    ret['dr'] = dr
-    ret['dv'] = dv
-
-    return ret
-
-
-def sorting_function(metric):
-    '''How to sort the matches using a weight between range and range rate.
-    '''
-    P = np.sqrt(metric['dr']**2 + 1e3*metric['dv']**2)
-    return np.argsort(P, axis=0)
-
-
-def save_correlation_data(output_pth, indecies, metric, correlation_data, meta=None):
+def save_correlation_data(output_pth, indices, metric, correlation_data, meta=None, save_states=False):
     print(f'Saving correlation data to {output_pth}')
     with h5py.File(output_pth, 'w') as ds:
 
-        match_index = np.arange(indecies.shape[0])
-        observation_index = np.arange(indecies.shape[1])
+        match_index = np.arange(indices.shape[0])
+        observation_index = np.arange(indices.shape[1])
 
         # Create global attributes for dataset
         if meta is not None:
             for key in meta:
                 ds.attrs[key] = meta[key]
 
-        ds['obj_ind'] = np.array(list(correlation_data.keys()))
-        ds_obj_ind = ds['obj_ind']
+        ds['object_index'] = np.array(list(correlation_data.keys()))
+        ds_obj_ind = ds['object_index']
         ds_obj_ind.make_scale('object_index')
-        ds_obj_ind.attrs['long_name'] = 'object population index'
+        ds_obj_ind.attrs['long_name'] = 'Object index in the used population'
 
-        cartesian = ds.create_dataset(
-            "axis",
+        cartesian_pos = ds.create_dataset(
+            "cartesian_pos_axis",
             data=[s.encode() for s in ["x", "y", "z"]],
         )
-        cartesian.make_scale('cartesian_axis')
-        cartesian.attrs['long_name'] = 'cartesian axis names'
+        cartesian_pos.make_scale('cartesian_pos_axis')
+        cartesian_pos.attrs['long_name'] = 'Cartesian position axis names'
+        # FIX this
 
-        ds['mch_ind'] = match_index
-        ds_mch_ind = ds['mch_ind']
-        ds_mch_ind.make_scale('match_index')
-        ds_mch_ind.attrs['long_name'] = 'nth best matching index'
+        cartesian_vel = ds.create_dataset(
+            "cartesian_vel_axis",
+            data=[s.encode() for s in ["vx", "vy", "vz"]],
+        )
+        cartesian_vel.make_scale('cartesian_vel_axis')
+        cartesian_vel.attrs['long_name'] = 'Cartesian velocity axis names'
 
-        ds['obs_ind'] = observation_index
-        ds_obs_ind = ds['obs_ind']
+        ds['maching_rank'] = match_index
+        ds_mch_ind = ds['maching_rank']
+        ds_mch_ind.make_scale('maching_rank')
+        ds_mch_ind.attrs['long_name'] = 'Matching rank numbering from best as lowest rank to worst at hightest rank'
+
+        ds['observation_index'] = observation_index
+        ds_obs_ind = ds['observation_index']
         ds_obs_ind.make_scale('observation_index')
-        ds_obs_ind.attrs['long_name'] = 'radar observation index'
+        ds_obs_ind.attrs['long_name'] = 'Observation index in the input radar data'
 
         def _create_ia_var(base, name, long_name, data, scales, units=None):
             base[name] = data.copy()
@@ -105,8 +146,9 @@ def save_correlation_data(output_pth, indecies, metric, correlation_data, meta=N
                 var.attrs['units'] = units
 
         scales = [ds_mch_ind, ds_obs_ind]
-        _create_ia_var(ds, 'match_oid', 'Matched object id in the used population', indecies, scales)
-        _create_ia_var(ds, 'match_metric', 'Matching metric values for the object', metric, scales)
+
+        _create_ia_var(ds, 'matched_object_index', 'Index of the correlated object', indices, scales)
+        _create_ia_var(ds, 'matched_object_metric', 'Correlation metric for the correlated object', metric, scales)
 
         # We currently only supply one dat dict to the correlator
         measurement_set_index = 0
@@ -115,13 +157,30 @@ def save_correlation_data(output_pth, indecies, metric, correlation_data, meta=N
             return np.stack([val[measurement_set_index][key] for _, val in x.items()], axis=0)
 
         scales = [ds_obj_ind, ds_obs_ind]
-        _create_ia_var(ds, 'r_sim', 'simulated range', stacker(correlation_data, 'r_ref'), scales, units='m')
-        _create_ia_var(ds, 'v_sim', 'simulated range rate', stacker(correlation_data, 'v_ref'), scales, units='m/s')
-        _create_ia_var(ds, 'match_sim', 'calculated metric', stacker(correlation_data, 'match'), scales)
-        _create_ia_var(ds, 'states', 'simulated states', stacker(correlation_data, 'states'), scales + [cartesian])
+        _create_ia_var(ds, 'simulated_range', 'Simulated range', stacker(correlation_data, 'r_ref'), scales, units='m')
+        _create_ia_var(ds, 'simulated_range_rate', 'Simulated range rate', stacker(correlation_data, 'v_ref'), scales, units='m/s')
+        _create_ia_var(ds, 'simulated_correlation_metric', 'Calculated metric for the simulated ITRS state', stacker(correlation_data, 'match'), scales)
+        
+        if save_states:
+            _create_ia_var(
+                ds, 
+                'simulated_position', 
+                'Simulated ITRS positions', 
+                np.stack([val[measurement_set_index]['states'][:3, ...].T for _, val in correlation_data.items()], axis=0),
+                scales + [cartesian_pos],
+                units='m',
+            )
+            _create_ia_var(
+                ds, 
+                'simulated_velocity', 
+                'Simulated ITRS velocities', 
+                np.stack([val[measurement_set_index]['states'][3:, ...].T for _, val in correlation_data.items()], axis=0),
+                scales + [cartesian_vel],
+                units='m/s',
+            )
 
 
-def run():
+def main(input_args=None):
 
     if comm is not None:
         print('MPI detected')
@@ -135,13 +194,19 @@ def run():
     parser.add_argument('output', type=str, help='Results output location')
     parser.add_argument('-c', '--clobber', action='store_true', help='Override output location if it exists')
     parser.add_argument('--std', action='store_true', help='Use measurement errors')
+    parser.add_argument('--jitter', action='store_true', help='Use time jitter')
+    parser.add_argument('--range-rate-scaling', default=0.2, type=float, help='Scaling used on range rate in the sorting function of the correlator')
+    parser.add_argument('--range-scaling', default=1.0, type=float, help='Scaling used on range in the sorting function of the correlator')
+    parser.add_argument('--save-states', action='store_true', help='Save simulated states')
+    parser.add_argument('--target-epoch', type=str, default=None, help='When filtering unique TLEs use this target epoch [ISO]')
 
-    args = parser.parse_args()
-
-    if args.std:
-        metric = vector_diff_metric_std_normalized
+    if input_args is None:
+        args = parser.parse_args()
     else:
-        metric = vector_diff_metric
+        args = parser.parse_args(input_args)
+
+    s_dr = args.range_rate_scaling
+    s_r = args.range_scaling
 
     radar = getattr(sorts.radars, args.radar)
 
@@ -156,6 +221,14 @@ def run():
         ]
     else:
         meta_vars = []
+
+    if args.jitter:
+        propagation_handling = jitter_propagation_handling
+    else:
+        propagation_handling = default_propagation_handling
+
+    meta_vars.append('dr_scale')
+    meta_vars.append('dv_scale')
 
     measurements = []
     if output_pth.is_file() and not args.clobber:
@@ -207,6 +280,8 @@ def run():
                     'tx': radar.tx[0],
                     'rx': radar.rx[0],
                     'measurement_num': len(t),
+                    'dr_scale': s_r,
+                    'dv_scale': s_dr,
                 }
 
                 if args.std:
@@ -218,6 +293,11 @@ def run():
     print('Loading TLE population')
     pop = sorts.population.tle_catalog(tle_pth, cartesian=False)
 
+    if args.target_epoch is not None:
+        args.target_epoch = Time(args.target_epoch, format='iso', scale='utc').mjd
+
+    pop.unique(target_epoch=args.target_epoch)
+
     # correlate requires output in ECEF 
     pop.out_frame = 'ITRS'
 
@@ -227,30 +307,32 @@ def run():
     if output_pth.is_file() and not args.clobber:
         print('Loading correlation data from cache')
         with open(output_pth, 'rb') as fh:
-            indecies, metric, cdat = pickle.load(fh)
+            indices, metric, cdat = pickle.load(fh)
     else:
         if comm is not None:
             comm.barrier()
 
         MPI = comm is not None and comm.size > 1
 
-        indecies, metric, correlation_data = sorts.correlate(
+        indices, metric, correlation_data = sorts.correlate(
             measurements = measurements,
             population = pop,
             n_closest = 1,
             meta_variables = meta_vars,
-            metric = metric, 
-            sorting_function = sorting_function,
-            metric_dtype = [('dr', np.float64), ('dv', np.float64)],
+            metric = vector_diff_metric, 
+            sorting_function = lambda x: np.argsort(x['metric'], axis=0),
+            metric_dtype = res_t,
             metric_reduce = None,
             scalar_metric = False,
+            propagation_handling = propagation_handling,
             MPI = MPI,
+            save_states = args.save_states,
         )
 
         if comm is None or comm.rank == 0:
             save_correlation_data(
                 output_pth, 
-                indecies, 
+                indices, 
                 metric, 
                 correlation_data, 
                 meta = dict(
@@ -261,17 +343,19 @@ def run():
                     rx_lat = radar.rx[0].lat,
                     rx_lon = radar.rx[0].lon,
                     rx_alt = radar.rx[0].alt,
-
+                    range_scaling = s_r,
+                    range_rate_scaling = s_dr,
                 ),
+                save_states = args.save_states,
             )
 
     if comm is None or comm.rank == 0:
         print('Individual measurement match metric:')
-        for mind, (ind, dst) in enumerate(zip(indecies.T, metric.T)):
+        for mind, (ind, dst) in enumerate(zip(indices.T, metric.T)):
             print(f'measurement = {mind}')
             for res in range(len(ind)):
                 print(f'-- result rank = {res} | object ind = {ind[res]} | metric = {dst[res]} | obj = {pop["oid"][ind[res]]}')
 
 
 if __name__ == '__main__':
-    run()
+    main()
