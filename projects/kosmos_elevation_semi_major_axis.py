@@ -79,6 +79,31 @@ for radar in dates:
         save_path.mkdir(exist_ok=True)
         save_paths[radar].append(save_path)
 
+radar_title = {
+    'esr': [
+        'EISCAT Svalbard Radar 32m',
+        'EISCAT Svalbard Radar 32m',
+        'EISCAT Svalbard Radar 42m',
+        'EISCAT Svalbard Radar 42m',
+    ],
+    'uhf': ['EISCAT UHF']*3,
+}
+
+radar_info = {
+    'uhf': [
+        [(90., 75., 1.), sorts.radars.eiscat_uhf.tx[0]],
+        [(90., 75., 1.), sorts.radars.eiscat_uhf.tx[0]],
+        [(90., 75., 1.), sorts.radars.eiscat_uhf.tx[0]],
+    ],
+    'esr': [
+        [(90., 75., 1.), sorts.radars.eiscat_esr.tx[0]],
+        [(96.4, 82.1, 1.), sorts.radars.eiscat_esr.tx[0]],
+        [(185.5, 82.1, 1.), sorts.radars.eiscat_esr.tx[1]],
+        [(185.5, 82.1, 1.), sorts.radars.eiscat_esr.tx[1]],
+    ],
+}
+pprint(radar_info)
+
 
 class Categories:
     uncorrelated_other = 0
@@ -106,49 +131,6 @@ def load_data(file):
     return t, r, v, snr, dur, diam
 
 
-data_type = {
-    'uhf': [
-        ['90.0 Az 75.0 El EISCAT UHF 2021-11-[23,25,29]', (0, 1, 2)],
-    ],
-    'esr': [
-        ['90.0 Az 75.0 El ESR-32m 2021-11-[19]', (0,)],
-        ['96.4 Az 82.1 El ESR-32m 2021-11-[23]', (1,)],
-        ['185.5 Az 82.1 El ESR-42m 2021-11-[25,29]', (2, 3)],
-    ],
-}
-radar_info = {
-    'uhf': [
-        [(90., 75., 1.), sorts.radars.eiscat_uhf.tx[0]],
-        [(90., 75., 1.), sorts.radars.eiscat_uhf.tx[0]],
-        [(90., 75., 1.), sorts.radars.eiscat_uhf.tx[0]],
-    ],
-    'esr': [
-        [(90., 75., 1.), sorts.radars.eiscat_esr.tx[0]],
-        [(96.4, 82.1, 1.), sorts.radars.eiscat_esr.tx[0]],
-        [(185.5, 82.1, 1.), sorts.radars.eiscat_esr.tx[1]],
-        [(185.5, 82.1, 1.), sorts.radars.eiscat_esr.tx[1]],
-    ],
-}
-pprint(data_type)
-
-
-def escape(x):
-    return x.strip()\
-        .replace(' ', '_')\
-        .replace('-', '_')\
-        .replace('[', '')\
-        .replace(']', '')\
-        .replace(',', '-')
-
-
-prop = sorts.propagator.Kepler(
-    settings=dict(
-        in_frame='TEME',
-        out_frame='ITRS',
-    ),
-)
-
-
 def theta_orbit(r_teme, epoch, theta):
 
     orb = pyorb.Orbit(
@@ -171,14 +153,16 @@ def theta_orbit(r_teme, epoch, theta):
     orb.anom = 0
     v_norm = orb.speed[0]
 
-    x_hat = np.array([1, 0, 0])  # Z-axis unit vector
-    z_hat = np.array([0, 0, 1])  # Z-axis unit vector
+    x_hat = np.array([1, 0, 0], dtype=np.float64)  # Z-axis unit vector
+    z_hat = np.array([0, 0, 1], dtype=np.float64)  # Z-axis unit vector
     # formula for creating the velocity vectors
     b3 = r_teme/np.linalg.norm(r_teme)  # r unit vector
+    b3 = b3.flatten()
+
     b1 = np.cross(b3, z_hat)  # Az unit vector
-    b1 = b1/np.linalg.norm(b1)
     if np.linalg.norm(b1) < 1e-12:
         b1 = np.cross(b3, x_hat)  # Az unit vector
+    b1 = b1/np.linalg.norm(b1)
 
     b2 = np.cross(b3, b1)  # El unit vector
     v1 = np.cos(theta)
@@ -209,6 +193,13 @@ for radar in paths['data_paths']:
 
     for ind in range(len(paths['data_paths'][radar])):
 
+        cache_path = save_paths[radar][ind] / 'kep_elements.pickle'
+        if cache_path.is_file():
+            with open(cache_path, 'rb') as fh:
+                kepler_elems = pickle.load(fh)
+            orb_data[radar].append(kepler_elems)
+            continue
+
         tx = radar_info[radar][ind][1]
         sph_point = np.array(radar_info[radar][ind][0])
 
@@ -216,18 +207,13 @@ for radar in paths['data_paths']:
         ecef_point = sorts.frames.enu_to_ecef(tx.lat, tx.lon, tx.alt, local_point, radians=False)
         ecef_st = tx.ecef
 
-        select = np.load(category_files[radar][ind])
         data_file = paths['data_paths'][radar][ind]
         t, r, v, snr, dur, diam = load_data(data_file)
         times = Time(t, format='unix', scale='utc')
 
-        ai = {
-            'a': np.zeros_like(t),
-            'i': np.zeros_like(t),
-            'raan': np.zeros_like(t),
-        }
+        kepler_elems = np.full((6, 2, len(t)), np.nan, dtype=np.float64)
         
-        for evi in range(len(t)):
+        for evi in tqdm(range(len(t))):
             r_obj = r[evi]*1e3
             v_obj = v[evi]*1e3
             r_ecef = ecef_st + r_obj*ecef_point
@@ -250,32 +236,6 @@ for radar in paths['data_paths']:
                 in_frame='TEME', 
                 out_frame='ITRS',
             )
-
-            del orb
-
-            sim_range, sim_doppler = get_range_and_range_rate(tx, states)
-
-            del states
-
-            assert v_obj >= sim_doppler.min() and v_obj <= sim_doppler.max(),\
-                f'v_obj = {v_obj}, lims = {sim_doppler.min()}, {sim_doppler.max()}'
-
-            doppler_diff_interp = sciint.interp1d(theta, sim_doppler - v_obj, kind='linear')
-            theta_samp = np.linspace(0, np.pi*2, zero_res)
-            vals = doppler_diff_interp(theta_samp)
-            signs = np.sign(vals)
-            sign_diffs = np.abs(np.diff(signs))
-            root_inds = np.argwhere(sign_diffs > 1).flatten()
-            roots = theta_samp[root_inds]
-
-            print('Roots: ', np.degrees(roots))
-
-            det_orbs = theta_orbit(r_teme, epoch, roots)
-            det_orbs.calculate_kepler()
-            for orb in det_orbs:
-                print(orb)
-
-            exit()
 
             # Generates a nice plot
             # fig, axes = plt.subplots(3, 2)
@@ -301,41 +261,100 @@ for radar in paths['data_paths']:
             # fig.suptitle('Theta-parametrized orbit')
             # plt.show()
 
-        orb_data[radar].append(ai)
+            del orb
+
+            sim_range, sim_doppler = get_range_and_range_rate(tx, states)
+
+            del states
+
+            if v_obj < sim_doppler.min() or v_obj > sim_doppler.max():
+                # print(f'v_obj = {v_obj}, lims = {sim_doppler.min()}, {sim_doppler.max()}')
+                continue
+
+            doppler_diff_interp = sciint.interp1d(theta, sim_doppler - v_obj, kind='linear')
+            theta_samp = np.linspace(0, np.pi*2, zero_res)
+            vals = doppler_diff_interp(theta_samp)
+            signs = np.sign(vals)
+            sign_diffs = np.abs(np.diff(signs))
+            root_inds = np.argwhere(sign_diffs > 1).flatten()
+            roots = theta_samp[root_inds]
+
+            # print(f'Theta-roots: {np.degrees(roots)} deg')
+
+            det_orbs = theta_orbit(r_teme, epoch, roots)
+            det_orbs.calculate_kepler()
+
+            for ri in range(len(roots)):
+                kepler_elems[:, ri, evi] = det_orbs.kepler[:, ri]
+        with open(cache_path, 'wb') as fh:
+            pickle.dump(kepler_elems, fh)
+        orb_data[radar].append(kepler_elems)
 
 
-# for radar in save_paths:
-#     for ind in range(len(save_paths[radar])):
-#         for typi, inds in enumerate(data_type[radar]):
-#             if ind in inds[1]:
-#                 list_ptr = typi
-#                 break
+def plot_kepler(keps, select=None):
 
-#         for include_total in [True, False]:
-#             kosm = 'kosmos_' if include_total else ''
+    bins = int(np.round(np.sqrt(keps.shape[2])))
+    
+    fig, axes = plt.subplots(2, 3, sharey='all', sharex='col')
 
-#             plot_statistics(
-#                 data, 
-#                 kosmos_select(select), 
-#                 save_paths[radar][ind] / f'{dates[radar][ind]}_{radar}_{kosm}stat.png',
-#                 f'Detections {radar_title[radar][ind]} {dates[radar][ind]}',
-#                 include_total=include_total,
-#             )
+    selects = np.logical_not(np.any(np.isnan(keps[:, 0, :]), axis=0))
 
-# for radar in data_type:
-#     for ind in range(len(data_type[radar])):
-#         for x in range(6):
-#             tot_data[radar][ind][1][x] = np.concatenate(tot_data[radar][ind][1][x])
-#         type_data = tot_data[radar][ind][1]
-#         type_select = np.concatenate(tot_data[radar][ind][0])
+    print(f'Fraction not calculated {1 - np.sum(selects)/len(selects)}')
 
-#         for include_total in [True, False]:
-#             kosm = 'kosmos_' if include_total else ''
-#             name = data_type[radar][ind][0]
-#             plot_statistics(
-#                 type_data, 
-#                 kosmos_select(type_select), 
-#                 tot_pth / f'{escape(name)}_{kosm}stat.png',
-#                 data_type[radar][ind][0],
-#                 include_total=include_total,
-#             )
+    n1, bins1, patches = axes[0, 0].hist(keps[0, 0, selects]*1e-3, bins=bins)
+    axes[0, 0].set_ylabel('Frequency')
+    n2, bins2, patches = axes[0, 1].hist(keps[2, 0, selects], bins=bins)
+    n3, bins3, patches = axes[0, 2].hist(keps[4, 0, selects], bins=bins)
+    if select is not None:
+        selects = np.logical_and(selects, select)
+        axes[0, 0].hist(keps[0, 0, selects]*1e-3, bins=bins1)
+        axes[0, 1].hist(keps[2, 0, selects], bins=bins2)
+        axes[0, 2].hist(keps[4, 0, selects], bins=bins3)
+
+    selects = np.logical_not(np.any(np.isnan(keps[:, 1, :]), axis=0))
+
+    n1, bins1, patches = axes[1, 0].hist(keps[0, 1, selects]*1e-3, bins=bins, label='Total')
+    axes[1, 0].set_xlabel('Semi-major-axis [km]')
+    axes[1, 0].set_ylabel('Frequency')
+    n2, bins2, patches = axes[1, 1].hist(keps[2, 1, selects], bins=bins)
+    axes[1, 1].set_xlabel('Inclination [deg]')
+    n3, bins3, patches = axes[1, 2].hist(keps[4, 1, selects], bins=bins)
+    axes[1, 2].set_xlabel('RAAN [deg]')
+    if select is not None:
+        selects = np.logical_and(selects, select)
+        axes[1, 0].hist(keps[0, 1, selects]*1e-3, bins=bins1, label='KOSMOS-1408')
+        axes[1, 1].hist(keps[2, 1, selects], bins=bins2)
+        axes[1, 2].hist(keps[4, 1, selects], bins=bins3)
+        axes[1, 0].legend()
+    
+    return fig, axes
+
+
+all_kepler_elems = []
+all_selects = []
+for radar in save_paths:
+    for ind in range(len(save_paths[radar])):
+        select = np.load(category_files[radar][ind])
+        all_selects.append(select)
+
+        kepler_elems = orb_data[radar][ind]
+        all_kepler_elems.append(kepler_elems)
+        fig, axes = plot_kepler(kepler_elems)
+        fig.suptitle(f'{radar_title[radar][ind]} Circular-orbits')
+        fig.savefig(save_paths[radar][ind] / f'{radar_title[radar][ind].replace(" ", "_")}_kep_elements.png')
+
+        fig, axes = plot_kepler(kepler_elems, select=kosmos_select(select))
+        fig.suptitle(f'{radar_title[radar][ind]} Circular-orbits')
+        fig.savefig(save_paths[radar][ind] / f'{radar_title[radar][ind].replace(" ", "_")}_kosmos_kep_elements.png')
+
+
+all_kepler_elems = np.concatenate(all_kepler_elems, axis=2)
+all_selects = np.concatenate(all_selects, axis=0)
+
+fig, axes = plot_kepler(all_kepler_elems)
+fig.suptitle('EISCAT campagins 2021-11-[19-29] circular-orbits')
+fig.savefig(tot_pth / 'all_kep_elements.png')
+
+fig, axes = plot_kepler(all_kepler_elems, select=kosmos_select(all_selects))
+fig.suptitle('EISCAT campagins 2021-11-[19-29] circular-orbits')
+fig.savefig(tot_pth / 'all_kosmos_kep_elements.png')
