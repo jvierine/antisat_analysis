@@ -183,7 +183,7 @@ for radar in save_paths:
             tot_data[radar][list_ptr][1][x].append(data[x])
 
         for include_total in [True, False]:
-            kosm = '' if include_total else 'kosmos_'
+            kosm = 'kosmos_' if include_total else ''
 
             plot_statistics(
                 data, 
@@ -201,7 +201,7 @@ for radar in data_type:
         type_select = np.concatenate(tot_data[radar][ind][0])
 
         for include_total in [True, False]:
-            kosm = '' if include_total else 'kosmos_'
+            kosm = 'kosmos_' if include_total else ''
             name = data_type[radar][ind][0]
             plot_statistics(
                 type_data, 
