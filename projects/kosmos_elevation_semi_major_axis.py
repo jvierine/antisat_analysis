@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from matplotlib.gridspec import GridSpec
 import scipy.optimize as sciopt
+import scipy.interpolate as sciint
 from pprint import pprint
 from tqdm import tqdm
 # plt.style.use('dark_background')
@@ -24,6 +25,10 @@ tot_pth.mkdir(exist_ok=True)
 
 with open(OUTPUT / 'paths.pickle', 'rb') as fh:
     paths = pickle.load(fh)
+
+
+zero_res = 10000
+orb_samp = 300
 
 
 def get_range_and_range_rate(station, states):
@@ -144,13 +149,58 @@ prop = sorts.propagator.Kepler(
 )
 
 
-def locate_in_beam(x, orb, r_teme, epoch):
-    orb.i = x[0]
-    orb.Omega = x[1]
-    orb.anom = x[2]
-    orb_teme = orb.cartesian[:3, 0]
-    # return pyant.coordinates.vector_angle(orb_teme, r_teme)
-    return np.linalg.norm(orb_teme - r_teme)
+def theta_orbit(r_teme, epoch, theta):
+
+    orb = pyorb.Orbit(
+        M0=pyorb.M_earth, m=0, 
+        num=1, epoch=epoch, 
+        degrees=True,
+        direct_update=False,
+        auto_update=True,
+    )
+    orb.a = np.linalg.norm(r_teme)
+    orb.e = 0
+    orb.omega = 0
+
+    # angle of the velocity vector in the perpendicular plane of the position
+    # is the free parameter
+
+    # find the velocity of a circular orbit
+    orb.i = 0
+    orb.Omega = 0
+    orb.anom = 0
+    v_norm = orb.speed[0]
+
+    x_hat = np.array([1, 0, 0])  # Z-axis unit vector
+    z_hat = np.array([0, 0, 1])  # Z-axis unit vector
+    # formula for creating the velocity vectors
+    b3 = r_teme/np.linalg.norm(r_teme)  # r unit vector
+    b1 = np.cross(b3, z_hat)  # Az unit vector
+    b1 = b1/np.linalg.norm(b1)
+    if np.linalg.norm(b1) < 1e-12:
+        b1 = np.cross(b3, x_hat)  # Az unit vector
+
+    b2 = np.cross(b3, b1)  # El unit vector
+    v1 = np.cos(theta)
+    v2 = np.sin(theta)
+    inp_vec = v1[None, :]*b1[:, None] + v2[None, :]*b2[:, None]
+    v_temes = v_norm*inp_vec
+
+    # fig = plt.figure()
+    # ax = fig.add_subplot(111, projection='3d')
+    # ax.plot(v_temes[0, :], v_temes[1, :], v_temes[2, :], '.')
+    # plt.show()
+
+    orb.allocate(len(theta))
+    orb.update(
+        x = r_teme[0],
+        y = r_teme[1],
+        z = r_teme[2],
+        vx = v_temes[0, :],
+        vy = v_temes[1, :],
+        vz = v_temes[2, :],
+    )
+    return orb
 
 
 orb_data = {}
@@ -178,9 +228,8 @@ for radar in paths['data_paths']:
         }
         
         for evi in range(len(t)):
-
-            snr_max = np.argmax(snr)
-            r_obj = r[snr_max]
+            r_obj = r[evi]*1e3
+            v_obj = v[evi]*1e3
             r_ecef = ecef_st + r_obj*ecef_point
             epoch = times[evi]
 
@@ -192,86 +241,66 @@ for radar in paths['data_paths']:
             )
             r_teme = r_teme[:3]
 
-            orb = pyorb.Orbit(
-                M0=pyorb.M_earth, m=0, 
-                num=1, epoch=epoch, 
-                degrees=True,
-                direct_update=False,
-                auto_update=True,
-            )
-            orb.a = np.linalg.norm(r_teme)
-            orb.e = 0
-            orb.omega = 0
-
-            orb_samp = 100
-            # angle of the velocity vector in the perpendicular plane of the position
-            # is the free parameter
             theta = np.linspace(0, np.pi*2, orb_samp)
-            # find the velocity of a circular orbit
-            orb.i = 0
-            orb.Omega = 0
-            orb.anom = 0
-            v_norm = orb.speed[0]
+            orb = theta_orbit(r_teme, epoch, theta)
 
-            x_hat = np.array([1, 0, 0])  # Z-axis unit vector
-            z_hat = np.array([0, 0, 1])  # Z-axis unit vector
-            # formula for creating the velocity vectors
-            b3 = r_teme/np.linalg.norm(r_teme)  # r unit vector
-            b1 = np.cross(b3, z_hat)  # Az unit vector
-            if np.linalg.norm(b1) < 1e-12:
-                b1 = np.cross(b3, x_hat)  # Az unit vector
-
-            b2 = np.cross(b3, b1)  # El unit vector
-
-            def get_v_teme(th):
-                return v_norm*(np.cos(th)*b1 + np.sin(th)*b2)
-
-            pbar = tqdm(total=max_iter)
-            results = {
-                'fun': np.empty((max_iter,), dtype=np.float64), 
-                'x': np.empty((max_iter, 3), dtype=np.float64), 
-            }
-            for it in range(max_iter):
-                pbar.update(1)
-                x0 = np.random.rand(3)
-                x0[0] *= 90
-                x0[1:] *= 360
-                min_res = sciopt.minimize(
-                    locate_in_beam, x0, 
-                    args=(orb, r_ecef, epoch), 
-                    method='Nelder-Mead',
-                )
-
-                if min_res.fun < 1.0:
-                    results['fun'][it] = min_res.fun
-                    results['x'][it, :] = min_res.x
-            pbar.close()
-
-            orb_states = orb.copy()
-            orb_states.allocate(max_iter)
-            orb_states.direct_update = False
-            orb_states.update(
-                a=orb.a, 
-                e=orb.e, 
-                omega=orb.omega,
-                i = results['x'][:, 0],
-                Omega = results['x'][:, 1],
-                anom = results['x'][:, 2],
+            states = sorts.frames.convert(
+                epoch, 
+                orb.cartesian, 
+                in_frame='TEME', 
+                out_frame='ITRS',
             )
-            results['state'] = orb_states.cartesian
-            del orb_states
-            results['range'], results['doppler'] = get_range_and_range_rate(tx, results['state'])
-            
-            results['x'][:, 0] = np.mod(results['x'][:, 0] + 360, 180)
-            results['x'][:, 1:] = np.mod(results['x'][:, 1:] + 360, 360)
 
-            fig, axes = plt.subplots(3, 1)
-            axes[0].plot(results['x'][:, 0], results['x'][:, 1], '.')
-            axes[1].plot(results['x'][:, 1], results['range'], '.')
-            axes[2].plot(results['x'][:, 1], results['doppler'], '.')
-            plt.show()
+            del orb
+
+            sim_range, sim_doppler = get_range_and_range_rate(tx, states)
+
+            del states
+
+            assert v_obj >= sim_doppler.min() and v_obj <= sim_doppler.max(),\
+                f'v_obj = {v_obj}, lims = {sim_doppler.min()}, {sim_doppler.max()}'
+
+            doppler_diff_interp = sciint.interp1d(theta, sim_doppler - v_obj, kind='linear')
+            theta_samp = np.linspace(0, np.pi*2, zero_res)
+            vals = doppler_diff_interp(theta_samp)
+            signs = np.sign(vals)
+            sign_diffs = np.abs(np.diff(signs))
+            root_inds = np.argwhere(sign_diffs > 1).flatten()
+            roots = theta_samp[root_inds]
+
+            print('Roots: ', np.degrees(roots))
+
+            det_orbs = theta_orbit(r_teme, epoch, roots)
+            det_orbs.calculate_kepler()
+            for orb in det_orbs:
+                print(orb)
 
             exit()
+
+            # Generates a nice plot
+            # fig, axes = plt.subplots(3, 2)
+            # axes[0, 0].plot(orb.i, orb.Omega, '-')
+            # axes[0, 0].set_xlabel('Inclination [deg]')
+            # axes[0, 0].set_ylabel('Longitude of the ascending node [deg]')
+            # axes[1, 0].plot(orb.i, sim_range*1e-3, '-')
+            # axes[1, 0].set_xlabel('Inclination [deg]')
+            # axes[1, 0].set_ylabel('Range [km/s]')
+            # axes[2, 0].plot(orb.i, sim_doppler*1e-3, '-')
+            # axes[2, 0].set_xlabel('Inclination [deg]')
+            # axes[2, 0].set_ylabel('Doppler [km/s]')
+
+            # axes[0, 1].plot(np.degrees(theta), orb.Omega, '-')
+            # axes[0, 1].set_xlabel('Theta [deg]')
+            # axes[0, 1].set_ylabel('Longitude of the ascending node [deg]')
+            # axes[1, 1].plot(np.degrees(theta), orb.i, '-')
+            # axes[1, 1].set_xlabel('Theta [deg]')
+            # axes[1, 1].set_ylabel('Inclination [deg]')
+            # axes[2, 1].plot(np.degrees(theta), sim_doppler*1e-3, '-')
+            # axes[2, 1].set_xlabel('Theta [deg]')
+            # axes[2, 1].set_ylabel('Doppler [km/s]')
+            # fig.suptitle('Theta-parametrized orbit')
+            # plt.show()
+
         orb_data[radar].append(ai)
 
 
