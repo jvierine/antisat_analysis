@@ -17,6 +17,8 @@ HERE = Path(__file__).parent.resolve()
 OUTPUT = HERE / 'output' / 'russian_asat'
 print(f'Using {OUTPUT} as output')
 
+tot_pth = OUTPUT / 'all_kosmos_stat'
+tot_pth.mkdir(exist_ok=True)
 
 with open(OUTPUT / 'paths.pickle', 'rb') as fh:
     paths = pickle.load(fh)
@@ -24,16 +26,19 @@ with open(OUTPUT / 'paths.pickle', 'rb') as fh:
 
 category_files = {}
 dates = {}
+all_dates = []
 for radar in paths['data_paths']:
     category_files[radar] = []
     dates[radar] = []
     for ind in range(len(paths['data_paths'][radar])):
         date = paths['data_paths'][radar][ind].stem.replace('.', '-')
         dates[radar].append(date)
+        all_dates.append(date)
         out_categories = OUTPUT / f'{date}_{radar}_categories.npy'
         category_files[radar].append(out_categories)
 pprint(category_files)
 
+all_dates = np.sort(np.unique(all_dates))
 
 save_paths = {}
 for radar in dates:
@@ -68,8 +73,7 @@ def load_data(file):
 
 
 def plot_statistics(
-            data, select, radar, 
-            ind, outp, 
+            data, select, fname, title,
             include_total=False, size=(10, 8),
         ):
 
@@ -82,7 +86,7 @@ def plot_statistics(
     
     col = 'r' if include_total else 'b'
     
-    bin_edges = np.linspace(np.nanmin(r), np.nanmax(r), num=bins + 1, endpoint=True)
+    bin_edges = np.linspace(np.nanmin(r), np.min([np.nanmax(r), 2800]), num=bins + 1, endpoint=True)
     if include_total:
         axes[0, 0].hist(r, bins=bin_edges, color='b', label='Total')
     axes[0, 0].hist(r[select], bins=bin_edges, color=col, label='KOSMOS-1408')
@@ -91,7 +95,7 @@ def plot_statistics(
     if include_total: 
         axes[0, 0].legend()
 
-    bin_edges = np.linspace(np.nanmin(v), np.nanmax(v), num=bins + 1, endpoint=True)
+    bin_edges = np.linspace(np.max([np.nanmin(v), -2.5]), np.min([np.nanmax(v), 2.5]), num=bins + 1, endpoint=True)
     if include_total:
         axes[0, 1].hist(v, bins=bin_edges, color='b')
     axes[0, 1].hist(v[select], bins=bin_edges, color=col)
@@ -117,11 +121,8 @@ def plot_statistics(
     axes[1, 1].set_xlabel("Minimum diameter [log10(cm)]")
     axes[1, 1].set_ylabel("Detections")
     
-    fig.suptitle(f'Detections {radar_title[radar][ind]} {dates[radar][ind]}')
-    if include_total:
-        fig.savefig(outp / f'{date}_{radar}_stat.png')
-    else:
-        fig.savefig(outp / f'{date}_{radar}_kosmos_stat.png')
+    fig.suptitle(title)
+    fig.savefig(fname)
     plt.close(fig)
 
 
@@ -139,24 +140,73 @@ def kosmos_select(select):
     )
 
 
+data_type = {
+    'uhf': [
+        ['90.0 Az 75.0 El EISCAT UHF 2021-11-[23,25,29]', (0, 1, 2)],
+    ],
+    'esr': [
+        ['90.0 Az 75.0 El ESR-32m 2021-11-[19]', (0,)],
+        ['96.4 Az 82.1 El ESR-32m 2021-11-[23]', (1,)],
+        ['185.5 Az 82.1 El ESR-42m 2021-11-[25,29]', (2, 3)],
+    ],
+}
+
+pprint(data_type)
+
+
+def escape(x):
+    return x.strip()\
+        .replace(' ', '_')\
+        .replace('-', '_')\
+        .replace('[', '')\
+        .replace(']', '')\
+        .replace(',', '-')
+
+
+tot_data = {}
+for radar in data_type:
+    tot_data[radar] = []
+    for ind in range(len(data_type[radar])):
+        tot_data[radar].append([[], [list() for x in range(6)]])
+
 for radar in save_paths:
     for ind in range(len(save_paths[radar])):
+        for typi, inds in enumerate(data_type[radar]):
+            if ind in inds[1]:
+                list_ptr = typi
+                break
         select = np.load(category_files[radar][ind])
+        tot_data[radar][list_ptr][0].append(select)
         data_file = paths['data_paths'][radar][ind]
+        data = load_data(data_file)
+        for x in range(6):
+            tot_data[radar][list_ptr][1][x].append(data[x])
 
-        plot_statistics(
-            load_data(data_file), 
-            kosmos_select(select), 
-            radar, 
-            ind, 
-            save_paths[radar][ind],
-            include_total=False,
-        )
-        plot_statistics(
-            load_data(data_file), 
-            kosmos_select(select), 
-            radar, 
-            ind, 
-            save_paths[radar][ind],
-            include_total=True,
-        )
+        for include_total in [True, False]:
+            kosm = '' if include_total else 'kosmos_'
+
+            plot_statistics(
+                data, 
+                kosmos_select(select), 
+                save_paths[radar][ind] / f'{dates[radar][ind]}_{radar}_{kosm}stat.png',
+                f'Detections {radar_title[radar][ind]} {dates[radar][ind]}',
+                include_total=include_total,
+            )
+
+for radar in data_type:
+    for ind in range(len(data_type[radar])):
+        for x in range(6):
+            tot_data[radar][ind][1][x] = np.concatenate(tot_data[radar][ind][1][x])
+        type_data = tot_data[radar][ind][1]
+        type_select = np.concatenate(tot_data[radar][ind][0])
+
+        for include_total in [True, False]:
+            kosm = '' if include_total else 'kosmos_'
+            name = data_type[radar][ind][0]
+            plot_statistics(
+                type_data, 
+                kosmos_select(type_select), 
+                tot_pth / f'{escape(name)}_{kosm}stat.png',
+                data_type[radar][ind][0],
+                include_total=include_total,
+            )
