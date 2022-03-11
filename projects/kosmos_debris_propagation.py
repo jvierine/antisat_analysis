@@ -159,5 +159,5 @@ else:
     kepler = get_future_kepler_dist()
     np.save(cache_file, kepler)
 
-sorts.plotting.kepler_scatter(kepler)
+sorts.plotting.kepler_scatter(kepler.T, axis_labels='earth-orbit')
 plt.show()
