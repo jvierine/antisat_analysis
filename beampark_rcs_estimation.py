@@ -425,51 +425,50 @@ def main_estimate(args):
         r_obj = data['r'].values[snr_max]
         r_ecef = ecef_st + r_obj*ecef_point
 
-        mock_epoch = Time('J2000')
+        epoch = Time(data['t'].values[snr_max], format='unix', scale='utc')
         t_ = data['t'].values - data['t'].values[snr_max]
+
+        r_teme = sorts.frames.convert(
+            epoch, 
+            np.hstack([r_ecef, np.ones_like(r_ecef)]), 
+            in_frame='ITRS', 
+            out_frame='TEME',
+        )
+        r_teme = r_teme[:3]
 
         orb = pyorb.Orbit(
             M0=pyorb.M_earth, m=0, 
-            num=1, epoch=mock_epoch, 
+            num=1, epoch=epoch, 
             degrees=True,
         )
-        orb.a = np.linalg.norm(r_ecef)
-        orb.e = 0
-        orb.omega = 0
-
-        it = 1
-        x0 = np.array([51, 79, 158])
-        min_res = sciopt.minimize(
-            locate_in_beam, 
-            x0, 
-            args=(orb, r_ecef, mock_epoch), 
-            method='Nelder-Mead',
+        orb.update(
+            a = np.linalg.norm(r_teme),
+            e = 0,
+            omega = 0,
+            i = 0,
+            Omega = 0,
+            anom = 0,
         )
-        if args.v:
-            print(f'{it}: [{min_res.fun}] {x0}')
-        while it < 10 and min_res.fun > 1e3:
-            it += 1
-            x0 = np.random.rand(3)
-            x0[0] *= 90
-            x0[1:] *= 360
-            min_res0 = sciopt.minimize(
-                locate_in_beam, x0, 
-                args=(orb, r_ecef, mock_epoch), 
-                method='Nelder-Mead',
-            )
+        v_norm = orb.speed[0]
 
-            if args.v:
-                print(f'{it}: [{min_res0.fun}] {x0} -> {min_res0.x}')
-            if min_res0.fun < min_res.fun:
-                min_res = min_res0
-            if min_res.fun < 1e3:
-                break
-        if args.v:
-            print(min_res)
-
-        orb.i = min_res.x[0]
-        orb.Omega = min_res.x[1]
-        orb.anom = min_res.x[2]
+        x_hat = np.array([1, 0, 0], dtype=np.float64)  # Z-axis unit vector
+        z_hat = np.array([0, 0, 1], dtype=np.float64)  # Z-axis unit vector
+        # formula for creating the velocity vectors
+        b3 = r_teme/np.linalg.norm(r_teme)  # r unit vector
+        b3 = b3.flatten()
+        b1 = np.cross(b3, z_hat)  # Az unit vector
+        if np.linalg.norm(b1) < 1e-12:
+            b1 = np.cross(b3, x_hat)  # Az unit vector
+        b1 = b1/np.linalg.norm(b1)
+        v_temes = v_norm*b1
+        orb.update(
+            x = r_teme[0],
+            y = r_teme[1],
+            z = r_teme[2],
+            vx = v_temes[0],
+            vy = v_temes[1],
+            vz = v_temes[2],
+        )
         if args.v:
             print(orb)
 
@@ -487,7 +486,7 @@ def main_estimate(args):
                     f_args_list = [(
                         ind, data, orb, 
                         incs, nus, t_, 
-                        mock_epoch, radar, ecef_st, 
+                        epoch, radar, ecef_st, 
                         prop, 
                         ) for ind in range(samps)
                     ]
@@ -762,6 +761,9 @@ def main_predict(args):
         event_path = str(correlated_extended_files[select_id])
         event_name = str(correlated_extended_names[select_id])
         event_row = event_data[event_names.index(event_name)]
+
+        # ADD JITTER ITERATOR HERE
+
         obj = pop.get_object(obj_id)
         print('Correlated TLE object for :')
         print(f' - measurement {meas_id}')
@@ -1000,6 +1002,7 @@ def main_collect(args):
         'estimated_diam': _init_array.copy(),
         'estimated_min_diam': _init_array.copy(),
         'estimated_max_diam': _init_array.copy(),
+        'estimated_diams': [None]*num,
         'estimated_gain': _init_array.copy(),
         'proxy_d_inc': _init_array.copy(),
         'proxy_d_anom': _init_array.copy(),
@@ -1048,6 +1051,7 @@ def main_collect(args):
         probable_matches = match_data['best_matches'] > match_limit
         probable_diams = match_data['best_diams'][probable_matches]
 
+        summary_data['estimated_diams'][ev_id] = probable_diams
         summary_data['estimated_min_diam'][ev_id] = np.min(probable_diams)
         summary_data['estimated_max_diam'][ev_id] = np.max(probable_diams)
 
