@@ -9,10 +9,10 @@ import json
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+# import scipy.spatial as scisp
 from astropy.time import Time
-import scipy.optimize as sciopt
 from tqdm import tqdm
-import multiprocessing as mp
 import h5py
 
 import sorts
@@ -25,10 +25,25 @@ from convert_spade_events_to_h5 import MIN_SNR
 
 from discosweb_download import main as discosweb_download_main
 
+try:
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+except ImportError:
+    class COMM_WORLD:
+        rank = 0
+        size = 1
+        
+        def Barrier(self):
+            pass
+
+    comm = COMM_WORLD()
+
 '''
 Example execution:
 
-./beampark_rcs_estimation.py -v estimate -n 6 \
+mpirun -np 6 ./beampark_rcs_estimation.py estimate \
+    --matches-plotted 3 --min-gain 10.0 --min-snr 15.0 \
+    --inclination-samples 150 --anomaly-samples 100 \
     eiscat_uhf \
     ~/data/spade/beamparks/uhf/2021.11.23/leo_bpark_2.1u_NO@uhf_extended/ \
     ./projects/output/russian_asat/2021.11.23_uhf_rcs
@@ -58,9 +73,11 @@ Example execution:
 '''
 
 
-def matching_function(data, SNR_sim, low_gain_inds, args, ind):
+def matching_function(data, SNR_sim, low_gain_inds, args):
     # Filter measurnments
-    use_data = np.log10(data['SNR'].values)*10 > args.min_snr
+    sndb = np.log10(data['SNR'].values)*10
+    use_data = sndb > args.min_snr
+    limit_ratio = args.min_snr/np.max(sndb)
 
     xsn = data['SNR'].values[use_data]
     ysn = SNR_sim[use_data]
@@ -71,15 +88,31 @@ def matching_function(data, SNR_sim, low_gain_inds, args, ind):
     else:
         match = np.sum(xsn*ysn)/norm_coef
 
-    # Apply weighting based on amount of data used
+    not_used = np.logical_not(use_data)
+    if not np.any(not_used):
+        low_sn_weight = 1
+    elif np.any(SNR_sim > 0):
+        ysndb = np.full(SNR_sim.shape, np.nan, dtype=SNR_sim.dtype)
+        ysndb[SNR_sim > 0] = np.log10(SNR_sim[SNR_sim > 0])*10
+        ysndb /= np.nanmax(ysndb)
+
+        matching_low_snr = np.logical_and(
+            not_used,
+            ysndb < limit_ratio,
+        )
+        low_sn_weight = np.sum(matching_low_snr)/np.sum(not_used)
+    else:
+        low_sn_weight = 0
+
+    # Apply weighting based on amount of data used and low snr portion
     points = np.sum(use_data)
-    match *= (points - np.sum(low_gain_inds[use_data]))/points
+    points_weight = (points - np.sum(low_gain_inds[use_data]))/points
+    match *= points_weight
+    match *= low_sn_weight
 
-    return match, ind
+    meta = [points_weight, low_sn_weight]
 
-
-def wrapped_matching_function(f_args):
-    return matching_function(*f_args)
+    return match, meta
 
 
 def load_spade_extended(path):
@@ -88,6 +121,17 @@ def load_spade_extended(path):
     names[10] = 'SNR'
     names[14] = 't'
     names[9] = 'v'
+
+    unix0 = None
+    with open(path, 'r') as fh:
+        for row in fh:
+            if row.startswith('time1'):
+                time1 = row[(row.index('[')+1):row.index(']')].split()
+                unix0 = Time(
+                    '-'.join(time1[:3]) + 'T' + ':'.join(time1[3:6]) + f'.{time1[6]}',
+                    format='isot', scale='utc',
+                ).unix
+                break
 
     data = pd.read_csv(
         path, 
@@ -103,6 +147,7 @@ def load_spade_extended(path):
         if data['t'].values[ti] > data['t'].values[ti + 1]:
             data['t'].values[(ti + 1):] += data['t'].values[ti]
     data['t'] = (data['t'] - np.min(data['t']))*1e-6
+    data['unix'] = unix0 + data['t']
     data['r'] = data['r']*1e3
 
     return data
@@ -124,14 +169,14 @@ def locate_in_beam(x, orb, r_ecef, epoch):
 
 
 def evaluate_sample(
-            ind, data, orb, 
-            incs, nus, t_, 
-            epoch, radar, ecef_st, 
-            prop,
-        ):
+                data, orb, 
+                inc, nu, t_, 
+                epoch, radar, ecef_st, 
+                prop,
+            ):
     orb_pert = orb.copy()
-    orb_pert.i = orb_pert.i + incs[ind]
-    orb_pert.anom = orb_pert.anom + nus[ind]
+    orb_pert.i = orb_pert.i + inc
+    orb_pert.anom = orb_pert.anom + nu
 
     states_ecef = prop.propagate(t_, orb_pert, epoch=epoch)
     local_pos = sorts.frames.ecef_to_enu(
@@ -169,11 +214,7 @@ def evaluate_sample(
         radar_albedo=1.0,
     )
 
-    return pth, diam, SNR_sim, G_pth, ind
-
-
-def wrapped_evaluate_sample(f_args):
-    return evaluate_sample(*f_args)
+    return pth, diam, SNR_sim, G_pth
 
 
 def plot_selection(ax, x, y, selector, styles, labels=None, colors=None):
@@ -199,11 +240,15 @@ def plot_selection(ax, x, y, selector, styles, labels=None, colors=None):
             sel_kw['label'] = labels[0]
         if labels[1] is not None:
             not_sel_kw['label'] = labels[1]
-    if labels is not None:
-        if colors[0] is not None:
-            sel_kw['color'] = colors[0]
-        if colors[1] is not None:
-            not_sel_kw['color'] = colors[1]
+    if colors is not None:
+        if isinstance(colors, str):
+            sel_kw['color'] = colors
+            not_sel_kw['color'] = colors
+        else:
+            if colors[0] is not None:
+                sel_kw['color'] = colors[0]
+            if colors[1] is not None:
+                not_sel_kw['color'] = colors[1]
 
     ax.plot(x_sel, y_sel, styles[0], **sel_kw)
     ax.plot(x_not_sel, y_not_sel, styles[1], **not_sel_kw)
@@ -212,32 +257,36 @@ def plot_selection(ax, x, y, selector, styles, labels=None, colors=None):
 
 
 def plot_match(
-            data, mch_ind, diams, 
+            data, diams, 
             t_, dt, use_data, 
             sn_s, sn_m, gain,
             mch_rank, results_folder, radar, 
-            pths,
+            pth, args,
         ):
     fig, axes = plt.subplots(2, 3, figsize=(16, 8), sharex=True)
-    ax2 = axes[0, 0].twinx()
-    axes[0, 0].plot(data['t'], diams[mch_ind]*1e2, '-b')
-    axes[0, 0].set_ylabel('Diameter [cm]', color='b')
-    ax2.plot(
-        data['t'][np.abs(t_) < dt], 
-        diams[mch_ind][np.abs(t_) < dt]*1e2, 
-        'xg',
+
+    styles = ['-', '.-']
+
+    plot_selection(
+        ax=axes[0, 0], 
+        x=data['t'].values, 
+        y=diams*1e2, 
+        selector=use_data, 
+        styles=styles, 
+        labels=['Used measurements', 'Not used measurements'], 
+        colors='b',
     )
-    ax2.set_ylabel('Diameter around peak SNR [cm]', color='g')
+    axes[0, 0].set_ylabel('Diameter [cm]', color='b')
 
     plot_selection(
         ax=axes[0, 1], 
         x=data['t'].values, 
-        y=np.log10(diams[mch_ind]*1e2), 
+        y=np.log10(diams*1e2), 
         selector=use_data, 
-        styles=['-', '--'], 
+        styles=styles, 
         labels=['Used measurements', 'Not used measurements'], 
+        colors='b',
     )
-    axes[0, 1].legend()
     axes[0, 1].set_ylabel('Diameter [log10(cm)]')
 
     axes[1, 0].set_xlabel('Time [s]')
@@ -247,47 +296,63 @@ def plot_match(
         x=data['t'].values, 
         y=sn_s, 
         selector=use_data, 
-        styles=['-', '--'], 
+        styles=styles, 
         labels=['Estimated', None], 
         colors='b',
     )
+    plot_selection(
+        ax=axes[1, 0], 
+        x=data['t'].values, 
+        y=sn_m, 
+        selector=use_data, 
+        styles=styles, 
+        labels=['Measured', None], 
+        colors='r',
+    )
 
-    axes[1, 0].plot(
-        data['t'][use_data], sn_s[use_data], 
-        '-', color='b', label='Estimated')
-    axes[1, 0].plot(
-        data['t'][use_data], sn_m[use_data], 
-        '-', color='r', label='Measured')
-    axes[1, 0].plot(
-        data['t'][not_use_data], sn_s[not_use_data], 
-        '--', color='b')
-    axes[1, 0].plot(
-        data['t'][not_use_data], sn_m[not_use_data], 
-        '--', color='r')
-    axes[1, 1].plot(
-        data['t'][use_data], 10*np.log10(sn_s)[use_data], 
-        '-', color='b', label='Estimated')
-    axes[1, 1].plot(
-        data['t'][use_data], 10*np.log10(sn_m)[use_data], 
-        '-', color='r', label='Measured')
-    axes[1, 1].plot(
-        data['t'][not_use_data], 10*np.log10(sn_s)[not_use_data], 
-        '--', color='b')
-    axes[1, 1].plot(
-        data['t'][not_use_data], 10*np.log10(sn_m)[not_use_data], 
-        '--', color='r')
-    axes[0, 2].plot(
-        data['t'][use_data], 10*np.log10(data['SNR'])[use_data], 
-        '-', color='b')
-    axes[0, 2].plot(
-        data['t'][not_use_data], 10*np.log10(data['SNR'])[not_use_data], 
-        '--', color='b')
-    axes[1, 2].plot(
-        data['t'][use_data], gain[use_data], 
-        '-', color='b')
-    axes[1, 2].plot(
-        data['t'][not_use_data], gain[not_use_data], 
-        '--', color='b')
+    plot_selection(
+        ax=axes[1, 1], 
+        x=data['t'].values, 
+        y=10*np.log10(sn_s), 
+        selector=use_data, 
+        styles=styles, 
+        labels=['Estimated', None], 
+        colors='b',
+    )
+    plot_selection(
+        ax=axes[1, 1], 
+        x=data['t'].values, 
+        y=10*np.log10(sn_m), 
+        selector=use_data, 
+        styles=styles, 
+        labels=['Measured', None], 
+        colors='r',
+    )
+
+    axes[0, 2].axhline(args.min_snr, color='g', label='Minimum SNR')
+    plot_selection(
+        ax=axes[0, 2], 
+        x=data['t'].values, 
+        y=10*np.log10(data['SNR']), 
+        selector=use_data, 
+        styles=styles, 
+        labels=['Used measurements', 'Not used measurements'], 
+        colors='r',
+    )
+    axes[0, 2].legend()
+
+    axes[1, 2].axhline(args.min_gain, color='g', label='Minimum gain')
+    plot_selection(
+        ax=axes[1, 2], 
+        x=data['t'].values, 
+        y=gain, 
+        selector=use_data, 
+        styles=styles, 
+        labels=[None, None], 
+        colors='b',
+    )
+    axes[1, 2].legend()
+
     axes[1, 0].legend()
     axes[1, 1].set_xlabel('Time [s]')
     axes[1, 2].set_xlabel('Time [s]')
@@ -305,8 +370,8 @@ def plot_match(
         ax=ax,
     )
     ax.plot(
-        pths[mch_ind][0, :], 
-        pths[mch_ind][1, :], 
+        pth[0, :], 
+        pth[1, :], 
         '-r'
     )
     ax.set_xlabel('kx [1]')
@@ -392,10 +457,32 @@ def main_estimate(args):
 
     event_data = read_extended_event_data(input_summaries, args)
 
-    for evi, event_name in enumerate(event_names):
+    inds = list(range(len(event_names)))
+    step = int(len(event_names)/comm.size + 1)
+    all_inds = [
+        np.array(inds[i:(i + step)], dtype=np.int64) 
+        for i in range(0, len(inds), step)
+    ]
+
+    assert all_inds[-1][-1] == inds[-1]
+
+    comm.Barrier()
+
+    pbar = tqdm(
+        total=len(all_inds[comm.rank]), 
+        position=comm.rank*2, 
+        desc=f'Rank-{comm.rank} events',
+    )
+    worker_inds = all_inds[comm.rank]
+
+    for evi in worker_inds:
+        event_name = event_names[evi]
+        pbar.set_description(f'Rank-{comm.rank} events [{event_name}]')
+
         event_indexing = event_data['event_name'] == event_name
         if not np.any(event_indexing):
-            print(f'Warning: "{event_name}" not found in events.txt, skipping')
+            if args.v:
+                print(f'Warning: "{event_name}" not found in events.txt, skipping')
             continue
         event_row = event_data[event_indexing]
         if args.v:
@@ -414,9 +501,10 @@ def main_estimate(args):
             azimuth=event_row['AZ'].values[0], 
             elevation=event_row['EL'].values[0],
         )
-        print(f'Setting pointing to: \n\
-            azimuth = {radar.tx[0].beam.azimuth} deg\n\
-            elevation = {radar.tx[0].beam.elevation} deg')
+        if args.v:
+            print(f'Setting pointing to: \n\
+                azimuth = {radar.tx[0].beam.azimuth} deg\n\
+                elevation = {radar.tx[0].beam.elevation} deg')
 
         ecef_point = radar.tx[0].pointing_ecef
         ecef_st = radar.tx[0].ecef
@@ -425,7 +513,10 @@ def main_estimate(args):
         r_obj = data['r'].values[snr_max]
         r_ecef = ecef_st + r_obj*ecef_point
 
-        epoch = Time(data['t'].values[snr_max], format='unix', scale='utc')
+        epoch = Time(data['unix'].values[snr_max], format='unix', scale='utc')
+        if args.v:
+            print(f'Epoch {epoch.iso}')
+
         t_ = data['t'].values - data['t'].values[snr_max]
 
         r_teme = sorts.frames.convert(
@@ -480,22 +571,24 @@ def main_estimate(args):
         else:
             if args.v:
                 print('Simulating SNR curves...')
-            with mp.Pool(args.processes) as pool:
-                reses = []
-                with tqdm(total=samps) as pbar:
-                    f_args_list = [(
-                        ind, data, orb, 
-                        incs, nus, t_, 
-                        epoch, radar, ecef_st, 
-                        prop, 
-                        ) for ind in range(samps)
-                    ]
-                    for i, res in enumerate(pool.imap_unordered(
-                                wrapped_evaluate_sample, 
-                                f_args_list,
-                            )):
-                        reses.append(res)
-                        pbar.update()
+
+            subpbar = tqdm(
+                total=samps, 
+                position=comm.rank*2 + 1,
+                desc=f'Rank-{comm.rank} SNR sampling',
+            )
+            reses = []
+            for ind in range(samps):
+                res = evaluate_sample(
+                    data, orb, 
+                    incs[ind], nus[ind], t_, 
+                    epoch, radar, ecef_st, 
+                    prop, 
+                )
+                reses.append(res)
+                subpbar.update(1)
+            subpbar.close()
+
             with open(cache_file, 'wb') as fh:
                 pickle.dump(reses, fh)
 
@@ -505,7 +598,7 @@ def main_estimate(args):
         gains = [None for x in range(samps)]
         low_gains = [None for x in range(samps)]
         for ind in range(samps):
-            pth, diam, SNR_sim, G_pth, ind = reses[ind]
+            pth, diam, SNR_sim, G_pth = reses[ind]
 
             G_pth_db = 10*np.log10(G_pth)
             gains[ind] = G_pth_db
@@ -524,27 +617,20 @@ def main_estimate(args):
             print('Calculating match values...')
 
         matches = [None for x in range(samps)]
-        with mp.Pool(args.processes) as pool:
-            with tqdm(total=samps) as pbar:
-                f_args_list = [(
-                    data, SNR_sims[ind], 
-                    low_gains[ind], args, 
-                    ind, 
-                    ) for ind in range(samps)
-                ]
-                wrapped_matching_function(f_args_list[0])
-                for match, ind in pool.imap_unordered(
-                            wrapped_matching_function, 
-                            f_args_list,
-                        ):
-                    matches[ind] = match
-                    pbar.update()
+        metas = [None for x in range(samps)]
+        for ind in range(samps):
+            matches[ind], metas[ind] = matching_function(
+                data, SNR_sims[ind], 
+                low_gains[ind], args, 
+            )
 
         matches = np.array(matches)
         matches_mat = matches.reshape(nus_mat.shape)
+        metas = np.array(metas)
+        points_weight_mat = metas[:, 0].reshape(nus_mat.shape)
+        low_sn_weight_mat = metas[:, 1].reshape(nus_mat.shape)
 
         use_data = np.log10(data['SNR'].values)*10 > args.min_snr
-        not_use_data = np.logical_not(use_data)
 
         sn_m_max = np.max(data['SNR'].values)
         sn_m = data['SNR'].values/sn_m_max
@@ -555,6 +641,9 @@ def main_estimate(args):
         best_gains = np.array([gains[ind][snr_max] for ind in best_matches_inds])
         best_ind = best_matches_inds[0]
 
+        diams_at_peak = np.array([diams[ind][snr_max] for ind in np.arange(len(diams))])
+        diams_at_peak_mat = diams_at_peak.reshape(nus_mat.shape)
+
         off_angles = np.zeros_like(matches)
         for ind in range(samps):
             off_angles[ind] = pyant.coordinates.vector_angle(
@@ -563,12 +652,68 @@ def main_estimate(args):
                  radians=False,
             )
         best_offaxis = off_angles[best_matches_inds]
+        off_angles_lin = off_angles.copy()
         off_angles = off_angles.reshape(matches_mat.shape)
         offset_angle = pyant.coordinates.vector_angle(
              pths[best_ind][:, snr_max], 
              radar.tx[0].beam.pointing, 
              radians=False,
         )
+
+        kv = np.array([pth[:, snr_max] for pth in pths]).T
+        azel = pyant.coordinates.cart_to_sph(kv, radians=True)
+        
+        prob_remover = matches < 0.5*matches.max()
+        matches_prob = matches.copy() - 0.5*matches.max()
+        matches_prob[prob_remover] = 0
+        matches_prob /= np.sum(matches_prob)
+        
+        zenith_prob = 5.0 - off_angles_lin
+        zenith_prob[prob_remover] = 0
+        zenith_prob[zenith_prob < 0] = 0
+        zenith_prob /= np.sum(zenith_prob)
+
+        kx_mat = kv[0, :].reshape(matches_mat.shape)
+        ky_mat = kv[1, :].reshape(matches_mat.shape)
+
+        dkx_mat = kx_mat[1:, :-1] - kx_mat[:-1, :-1]
+        dky_mat = ky_mat[:-1, 1:] - ky_mat[:-1, :-1]
+        kA = dkx_mat*dky_mat
+
+        select_mat = np.full(matches_mat.shape, False, dtype=bool)
+        select_mat[:-1, :-1] = True
+        select = select_mat.reshape(matches.shape)
+
+        # plt.errorbar(
+        #     kx_mat[:-1, :-1].flatten(),
+        #     ky_mat[:-1, :-1].flatten(),
+        #     xerr=dkx_mat.flatten(),
+        #     yerr=dky_mat.flatten(),
+        #     fmt='.',
+        # )
+        # plt.show()
+
+        # vor = scisp.Voronoi(kv[:2, :].T)
+        # fig = scisp.voronoi_plot_2d(vor)
+        # plt.show()
+
+        # just approximate by the sin
+        sph_area0 = kA.reshape((np.sum(select), ))/np.sin(azel[1, select])
+        sph_area = np.empty_like(matches)
+        sph_area[select] = sph_area0
+        sph_area[np.logical_not(select)] = np.nan
+
+        diams_prob = matches_prob*zenith_prob/sph_area
+        diams_prob[np.isnan(diams_prob)] = 0
+        diams_prob[prob_remover] = 0
+        diams_prob /= np.sum(diams_prob)
+
+        diam_prob_dist, diam_prob_bins = np.histogram(
+            np.log10(diams_at_peak*1e2), 
+            bins=np.linspace(0, 5, int(0.25*np.sqrt(len(diams_prob)))), 
+            weights=diams_prob,
+        )
+
         if args.v:
             print('== Best match ==')
             print(f'Inclination offset {incs[best_ind]} deg')
@@ -584,6 +729,12 @@ def main_estimate(args):
             best_path = pths[best_ind],
             best_inc = incs[best_ind],
             best_anom = nus[best_ind],
+            matches = matches_mat,
+            points_weight = points_weight_mat,
+            low_sn_weight = low_sn_weight_mat,
+            diams_at_peak = diams_at_peak_mat,
+            diam_prob_dist = diam_prob_dist,
+            diam_prob_bins = diam_prob_bins,
         )
 
         with open(match_file, 'wb') as fh:
@@ -592,24 +743,71 @@ def main_estimate(args):
         if args.v:
             print('Plotting...')
 
-        fig1, ax1 = plt.subplots(figsize=(12, 8))
-        fig2, ax2 = plt.subplots(figsize=(12, 8))
-        for pth in pths:
-            ax1.plot(pth[0, :], pth[1, :])
-            ax2.plot(pth[0, :], pth[1, :], color=[0.5, 0.5, 0.5], alpha=0.1)
-
-        pyant.plotting.gain_heatmap(
-            radar.tx[0].beam, 
-            min_elevation=85.0, 
-            ax=ax2,
+        fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+        
+        pmesh = axes[0, 0].pcolormesh(
+            incs_mat, 
+            nus_mat, 
+            matches_prob.reshape(matches_mat.shape),
         )
-        ax2.set_ylim(ax1.get_ylim())
-        ax2.set_xlim(ax1.get_xlim())
+        cbar = fig.colorbar(pmesh, ax=axes[0, 0])
+        cbar.set_label('Probability from matching  [1]')
+        axes[0, 0].set_ylabel('Anomaly perturbation [deg]')
 
-        fig1.savefig(results_folder / 'sample_trajs.png')
-        plt.close(fig1)
-        fig2.savefig(results_folder / 'sample_trajs_gain.png')
-        plt.close(fig2)
+        pmesh = axes[1, 0].pcolormesh(
+            incs_mat, 
+            nus_mat, 
+            zenith_prob.reshape(matches_mat.shape),
+        )
+        cbar = fig.colorbar(pmesh, ax=axes[1, 0])
+        cbar.set_label('Probability from off-axis angle  [1]')
+        axes[1, 0].set_xlabel('Inclination perturbation [deg]')
+        axes[1, 0].set_ylabel('Anomaly perturbation [deg]')
+
+        pmesh = axes[0, 1].pcolormesh(
+            incs_mat, 
+            nus_mat, 
+            diams_prob.reshape(matches_mat.shape),
+        )
+        cbar = fig.colorbar(pmesh, ax=axes[0, 1])
+        cbar.set_label('Probability for diameter [1]')
+
+        pmesh = axes[1, 1].pcolormesh(
+            incs_mat, 
+            nus_mat, 
+            sph_area.reshape(matches_mat.shape),
+        )
+        cbar = fig.colorbar(pmesh, ax=axes[1, 1])
+        cbar.set_label('Sample angular area [sr]')
+        axes[1, 1].set_xlabel('Inclination perturbation [deg]')
+
+        fig.savefig(results_folder / 'diam_prob_funcs.png')
+        plt.close(fig)
+
+        fig, ax = plt.subplots(figsize=(12, 8))
+        pmesh = ax.pcolormesh(
+            incs_mat, 
+            nus_mat, 
+            np.log10(1e2*diams_at_peak).reshape(matches_mat.shape),
+        )
+        cbar = fig.colorbar(pmesh, ax=ax)
+        cbar.set_label('Diameter at peak SNR [log10(cm)]')
+        ax.set_xlabel('Inclination perturbation [deg]')
+        ax.set_ylabel('Anomaly perturbation [deg]')
+        fig.savefig(results_folder / 'diam_peak_heat.png')
+        plt.close(fig)
+
+        fig, ax = plt.subplots(figsize=(12, 8))
+        ax.bar(
+            (diam_prob_bins[:-1] + diam_prob_bins[1:])*0.5,
+            diam_prob_dist, 
+            align='center', 
+            width=np.diff(diam_prob_bins),
+        )
+        ax.set_xlabel('Diameter at peak SNR [log10(cm)]')
+        ax.set_ylabel('Probability (from matching function) [1]')
+        fig.savefig(results_folder / 'diam_prob_dist.png')
+        plt.close(fig)
 
         fig, ax = plt.subplots(figsize=(12, 8))
         ax.plot(np.log10(best_diams*1e2), best_matches, '.', label='Samples')
@@ -632,20 +830,21 @@ def main_estimate(args):
             sn_s[sn_s <= 0] = np.nan
             
             plot_match(
-                data, mch_ind, diams, 
+                data, diams[mch_ind], 
                 t_, dt, use_data, 
-                not_use_data, sn_s, sn_m, gains[mch_ind],
+                sn_s, sn_m, gains[mch_ind],
                 mch_rank, results_folder, radar, 
-                pths,
+                pths[mch_ind], args,
             )
 
-        orig = np.argmin(np.abs(incs) + np.abs(nus))
+        orig = np.argmin(off_angles.flatten())
         plot_match(
-            data, orig, diams, 
+            data, diams[orig], 
             t_, dt, use_data, 
-            not_use_data, sn_s, sn_m, gains[orig],
-            np.argwhere(best_matches_inds == orig).flatten()[0], 
-            results_folder, radar, pths,
+            sn_s, sn_m, gains[orig],
+            'boresight', 
+            results_folder, radar, 
+            pths[orig], args,
         )
 
         fig, ax = plt.subplots(figsize=(12, 8))
@@ -658,6 +857,33 @@ def main_estimate(args):
         fig.savefig(results_folder / 'match_heat.png')
         plt.close(fig)
 
+        for weight, name, fname in zip(
+                        [points_weight_mat, low_sn_weight_mat],
+                        ['Used data points weight', 'Low SNR points weight'],
+                        ['points_weight', 'snr_weight'],
+                    ):
+            fig, ax = plt.subplots(figsize=(12, 8))
+            pmesh = ax.pcolormesh(incs_mat, nus_mat, weight)
+            cbar = fig.colorbar(pmesh, ax=ax)
+            ax.plot(incs[best_ind], nus[best_ind], 'or')
+            cbar.set_label(f'{name} [1]')
+            ax.set_xlabel('Inclination perturbation [deg]')
+            ax.set_ylabel('Anomaly perturbation [deg]')
+            fig.savefig(results_folder / f'{fname}_heat.png')
+            plt.close(fig)
+
+        wmat = points_weight_mat*low_sn_weight_mat
+        wmat[wmat == 0] = np.nan
+
+        fig, ax = plt.subplots(figsize=(12, 8))
+        pmesh = ax.pcolormesh(incs_mat, nus_mat, matches_mat/wmat)
+        cbar = fig.colorbar(pmesh, ax=ax)
+        cbar.set_label('Non-weighted matching function [1]')
+        ax.set_xlabel('Inclination perturbation [deg]')
+        ax.set_ylabel('Anomaly perturbation [deg]')
+        fig.savefig(results_folder / 'match_noweight_heat.png')
+        plt.close(fig)
+
         fig, ax = plt.subplots(figsize=(12, 8))
         pmesh = ax.pcolormesh(incs_mat, nus_mat, off_angles)
         cbar = fig.colorbar(pmesh, ax=ax)
@@ -668,12 +894,111 @@ def main_estimate(args):
         fig.savefig(results_folder / 'offaxis_heat.png')
         plt.close(fig)
 
+        cmap = cm.get_cmap('plasma')
+        vmin, vmax = np.min(matches), np.max(matches)
+        sm = plt.cm.ScalarMappable(
+            cmap=cmap, 
+            norm=plt.Normalize(vmin=vmin, vmax=vmax),
+        )
+        
+        cmap3 = cm.get_cmap('hot_r')
+        sm3 = plt.cm.ScalarMappable(
+            cmap=cmap3, 
+            norm=plt.Normalize(vmin=vmin, vmax=vmax),
+        )
+
+        fig1, ax1 = plt.subplots(figsize=(12, 8))
+        fig2, ax2 = plt.subplots(figsize=(12, 8))
+        fig3, ax3 = plt.subplots(figsize=(12, 8))
+        for ind, pth in enumerate(pths):
+            cval = (matches[ind] - vmin)/vmax
+            ax1.plot(pth[0, :], pth[1, :], color=cmap(cval), alpha=0.1)
+            ax2.plot(pth[0, :], pth[1, :], color=[0.5, 0.5, 0.5], alpha=0.1)
+            ax3.plot(pth[0, snr_max], pth[1, snr_max], '.', color=cmap3(cval))
+        cbar = fig.colorbar(sm, ax=ax1)
+        cbar.set_label('Matching function [1]')
+        cbar = fig.colorbar(sm3, ax=ax3)
+        cbar.set_label('Matching function [1]')
+        pyant.plotting.gain_heatmap(
+            radar.tx[0].beam, 
+            min_elevation=85.0, 
+            ax=ax2,
+        )
+        ax2.set_ylim(ax1.get_ylim())
+        ax2.set_xlim(ax1.get_xlim())
+
+        for ax in [ax1, ax2, ax3]:
+            ax.set_xlabel('kx [1]')
+            ax.set_ylabel('ky [1]')
+
+        fig1.savefig(results_folder / 'sample_trajs.png')
+        plt.close(fig1)
+        fig2.savefig(results_folder / 'sample_trajs_gain.png')
+        plt.close(fig2)
+        fig3.savefig(results_folder / 'sample_peak_match.png')
+        plt.close(fig3)
+
+        pbar.update(1)
+    pbar.close()
+
+
+def generate_prediction(data, t, obj, radar, args):
+
+    states_ecef = obj.get_state(t)
+    ecef_r = states_ecef[:3, :] - radar.tx[0].ecef[:, None]
+
+    local_pos = sorts.frames.ecef_to_enu(
+        radar.tx[0].lat, 
+        radar.tx[0].lon, 
+        radar.tx[0].alt, 
+        ecef_r,
+        radians=False,
+    )
+
+    pth = local_pos/np.linalg.norm(local_pos, axis=0)
+    G_pth = radar.tx[0].beam.gain(pth)
+    G_pth_db = 10*np.log10(G_pth)
+    diam = sorts.signals.hard_target_diameter(
+        G_pth, 
+        G_pth,
+        radar.tx[0].wavelength,
+        radar.tx[0].power,
+        data['r'].values, 
+        data['r'].values,
+        data['SNR'].values, 
+        bandwidth=radar.tx[0].coh_int_bandwidth,
+        rx_noise_temp=radar.rx[0].noise,
+        radar_albedo=1.0,
+    )
+    SNR_sim = sorts.signals.hard_target_snr(
+        G_pth, 
+        G_pth,
+        radar.tx[0].wavelength,
+        radar.tx[0].power,
+        data['r'].values, 
+        data['r'].values,
+        diameter=1, 
+        bandwidth=radar.tx[0].coh_int_bandwidth,
+        rx_noise_temp=radar.rx[0].noise,
+        radar_albedo=1.0,
+    )
+
+    low_gain_inds = G_pth_db < args.min_gain
+    diam[low_gain_inds] = np.nan
+    SNR_sim[low_gain_inds] = 0
+
+    return SNR_sim, G_pth, diam, low_gain_inds, ecef_r, pth
+
 
 def main_predict(args):
     radar = getattr(sorts.radars, args.radar)
 
-    G_db_lim = 1
-    est_diam = 1e0
+    t_jitter = np.arange(
+        -args.jitter_width, 
+        args.jitter_width, 
+        0.1, 
+        dtype=np.float64,
+    )
 
     tle_pth = Path(args.catalog).resolve()
     output_pth = Path(args.output).resolve()
@@ -750,6 +1075,8 @@ def main_predict(args):
 
     correlated_extended_files = event_paths[sub_correlation_select]
     correlated_extended_names = event_names[sub_correlation_select]
+
+    event_names_lst = event_names.tolist()
     
     pop = sorts.population.tle_catalog(tle_pth, cartesian=False)
     pop.unique()
@@ -760,9 +1087,7 @@ def main_predict(args):
         obj_id = correlated_object_id[select_id]
         event_path = str(correlated_extended_files[select_id])
         event_name = str(correlated_extended_names[select_id])
-        event_row = event_data[event_names.index(event_name)]
-
-        # ADD JITTER ITERATOR HERE
+        event_row = event_data.iloc[event_names_lst.index(event_name)]
 
         obj = pop.get_object(obj_id)
         print('Correlated TLE object for :')
@@ -779,55 +1104,29 @@ def main_predict(args):
         data = load_spade_extended(event_path)
 
         radar.tx[0].beam.sph_point(
-            azimuth=event_row['AZ'].values[0], 
-            elevation=event_row['EL'].values[0],
+            azimuth=event_row['AZ'], 
+            elevation=event_row['EL'],
         )
 
         dt = (times[meas_id] - obj.epoch).sec
         peak_snr_id = np.argmax(data['SNR'].values)
         t_vec = data['t'].values - data['t'].values[peak_snr_id]
 
-        states_ecef = obj.get_state(dt + t_vec)
-        ecef_r = states_ecef[:3, :] - radar.tx[0].ecef[:, None]
+        matches = np.empty_like(t_jitter)
+        pdatas = [None]*len(t_jitter)
 
-        local_pos = sorts.frames.ecef_to_enu(
-            radar.tx[0].lat, 
-            radar.tx[0].lon, 
-            radar.tx[0].alt, 
-            ecef_r,
-            radians=False,
-        )
+        for tind in range(len(t_jitter)):
+            _t = t_vec + dt + t_jitter[tind]
+            pdatas[tind] = generate_prediction(data, _t, obj, radar, args)
+            SNR_sim, G_pth, diam, low_gain_inds, ecef_r, pth = pdatas[tind]
 
-        pth = local_pos/np.linalg.norm(local_pos, axis=0)
-        G_pth = radar.tx[0].beam.gain(pth)
-        G_pth_db = 10*np.log10(G_pth)
-        diam = sorts.signals.hard_target_diameter(
-            G_pth, 
-            G_pth,
-            radar.tx[0].wavelength,
-            radar.tx[0].power,
-            data['r'].values, 
-            data['r'].values,
-            data['SNR'].values, 
-            bandwidth=radar.tx[0].coh_int_bandwidth,
-            rx_noise_temp=radar.rx[0].noise,
-            radar_albedo=1.0,
-        )
-        SNR_sim = sorts.signals.hard_target_snr(
-            G_pth, 
-            G_pth,
-            radar.tx[0].wavelength,
-            radar.tx[0].power,
-            data['r'].values, 
-            data['r'].values,
-            diameter=est_diam, 
-            bandwidth=radar.tx[0].coh_int_bandwidth,
-            rx_noise_temp=radar.rx[0].noise,
-            radar_albedo=1.0,
-        )
-
-        diam[G_pth_db < G_db_lim] = np.nan
-        SNR_sim[G_pth_db < G_db_lim] = 0
+            matches[tind], meta = matching_function(
+                data, SNR_sim, 
+                low_gain_inds, args, 
+            )
+        best_match = np.argmax(matches)
+        SNR_sim, G_pth, diam, low_gain_inds, ecef_r, pth = pdatas[best_match]
+        print(f't-jitter={t_jitter[best_match]}, match={matches[best_match]}')
 
         fig, ax = plt.subplots(figsize=(12, 8))
         ax.plot(data['t'], np.linalg.norm(ecef_r, axis=0))
@@ -965,12 +1264,6 @@ def area_to_diam(A):
 def main_collect(args):
     radar = getattr(sorts.radars, args.radar)
 
-    # TODO This is hardcoded for now
-    radar.tx[0].beam.sph_point(
-        azimuth=90, 
-        elevation=75,
-    )
-
     data_pth = Path(args.data).resolve()
     input_pth = Path(args.input).resolve()
     tle_pth = Path(args.catalog).resolve()
@@ -1004,6 +1297,8 @@ def main_collect(args):
         'estimated_max_diam': _init_array.copy(),
         'estimated_diams': [None]*num,
         'estimated_gain': _init_array.copy(),
+        'estimated_diam_prob': [None]*num,
+        'estimated_diam_bins': [None]*num,
         'proxy_d_inc': _init_array.copy(),
         'proxy_d_anom': _init_array.copy(),
         'predicted_offset_angle': _init_array.copy(),
@@ -1015,8 +1310,15 @@ def main_collect(args):
         'discos_max_diam': _init_array.copy(),
     }
 
+    input_summaries = list(data_pth.rglob('events.txt'))
+    event_data = read_extended_event_data(input_summaries, args)
+
+    size_dist = None
+    size_bins = None
+
     for ev_id in tqdm(range(num)):
         event_name = event_names[ev_id]
+        event_indexing = event_data['event_name'] == event_name
 
         results_folder = input_pth / event_name
         match_file = results_folder / f'{event_name}_results.pickle'
@@ -1027,6 +1329,12 @@ def main_collect(args):
 
         data = load_spade_extended(data_pths[ev_id])
         snr_max = np.argmax(data['SNR'].values)
+
+        event_row = event_data[event_indexing]
+        radar.tx[0].beam.sph_point(
+            azimuth=event_row['AZ'].values[0], 
+            elevation=event_row['EL'].values[0],
+        )
 
         with open(match_file, 'rb') as fh:
             match_data = pickle.load(fh)
@@ -1054,6 +1362,15 @@ def main_collect(args):
         summary_data['estimated_diams'][ev_id] = probable_diams
         summary_data['estimated_min_diam'][ev_id] = np.min(probable_diams)
         summary_data['estimated_max_diam'][ev_id] = np.max(probable_diams)
+
+        if size_dist is None:
+            size_dist = np.zeros_like(match_data['diam_prob_dist'])
+            size_bins = np.copy(match_data['diam_prob_bins'])
+        size_dist += match_data['diam_prob_dist']
+
+        summary_data['estimated_diam_prob'][ev_id] = match_data['diam_prob_dist']
+        summary_data['estimated_diam_bins'][ev_id] = match_data['diam_prob_bins']
+
 
         if predict_data is not None:
 
@@ -1097,6 +1414,18 @@ def main_collect(args):
             fig.savefig(results_folder / 'compare_pass_pth_gain.png')
             plt.close(fig)
 
+    fig, ax = plt.subplots(figsize=(12, 8))
+    ax.bar(
+        (size_bins[:-1] + size_bins[1:])*0.5,
+        size_dist, 
+        align='center', 
+        width=np.diff(size_bins),
+    )
+    ax.set_xlabel('Diameter at peak SNR [log10(cm)]')
+    ax.set_ylabel('Frequency (from matching function probability) [1]')
+    fig.savefig(input_pth / 'diam_prob_dist.png')
+    plt.close(fig)
+
     with open(collected_file, 'wb') as fh:
         pickle.dump(summary_data, fh)
 
@@ -1113,7 +1442,29 @@ def build_predict_parser(parser):
     parser.add_argument('input', type=str, help='Observation data folder, \
         expects folder with *.hlist files and an events.txt summary file.')
     parser.add_argument('output', type=str, help='Results output location')
-
+    parser.add_argument(
+        '--min-gain',
+        default=10.0,
+        metavar='MIN',
+        type=float, 
+        help='The minimum amount of dB one way gain at which to evalute \
+        SNR and RCS',
+    )
+    parser.add_argument(
+        '--min-snr',
+        default=5.0,
+        metavar='MIN',
+        type=float, 
+        help='The minimum amount of measured SNR dB at which to evalute \
+        SNR and RCS',
+    )
+    parser.add_argument(
+        '--jitter-width',
+        default=5.0,
+        metavar='JITTER',
+        type=float, 
+        help='The number of seconds to jitter back and forth',
+    )
     return parser
 
 
@@ -1148,13 +1499,6 @@ def build_estimate_parser(parser):
         help='The number of best matches to plot.',
     )
     parser.add_argument(
-        '-n', '--processes',
-        default=1,
-        metavar='NUM',
-        type=int,
-        help='Number of parallel processes used for calculations.',
-    )
-    parser.add_argument(
         '-c', '--clobber', 
         action='store_true', 
         help='Override output location if it exists',
@@ -1178,7 +1522,7 @@ def build_estimate_parser(parser):
     parser.add_argument(
         '--inclination-limits',
         nargs=2, 
-        default=[-0.008, 0.008],
+        default=[-0.46, 0.46],
         metavar=('MIN', 'MAX'),
         type=float, 
         help='The width of the inclination perturbation of the proxy orbit, \
@@ -1194,7 +1538,7 @@ def build_estimate_parser(parser):
     parser.add_argument(
         '--anomaly-limits',
         nargs=2, 
-        default=[-0.005, 0.005],
+        default=[-0.29, 0.29],
         metavar=('MIN', 'MAX'),
         type=float, 
         help='The width of the anomaly perturbation of the proxy orbit, \
