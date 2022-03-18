@@ -11,7 +11,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 # import scipy.spatial as scisp
-from astropy.time import Time
+from astropy.time import Time, TimeDelta
 from tqdm import tqdm
 import h5py
 
@@ -117,21 +117,19 @@ def matching_function(data, SNR_sim, low_gain_inds, args):
 
 def load_spade_extended(path):
     names = [f'{x}' for x in range(20)]
+    names[0] = 'hit'
+    names[1] = 'Y'
+    names[2] = 'M'
+    names[3] = 'D'
+    names[4] = 'h'
+    names[5] = 'm'
+    names[6] = 's'
+    names[7] = 'us'
+    
     names[8] = 'r'
     names[10] = 'SNR'
     names[14] = 't'
     names[9] = 'v'
-
-    unix0 = None
-    with open(path, 'r') as fh:
-        for row in fh:
-            if row.startswith('time1'):
-                time1 = row[(row.index('[')+1):row.index(']')].split()
-                unix0 = Time(
-                    '-'.join(time1[:3]) + 'T' + ':'.join(time1[3:6]) + f'.{time1[6]}',
-                    format='isot', scale='utc',
-                ).unix
-                break
 
     data = pd.read_csv(
         path, 
@@ -147,7 +145,16 @@ def load_spade_extended(path):
         if data['t'].values[ti] > data['t'].values[ti + 1]:
             data['t'].values[(ti + 1):] += data['t'].values[ti]
     data['t'] = (data['t'] - np.min(data['t']))*1e-6
-    data['unix'] = unix0 + data['t']
+    t_strs = []
+    for ind in range(len(data)):
+        t_strs.append(
+            '-'.join([f'{x:02}' for x in [data['Y'].values[ind], data['M'].values[ind], data['D'].values[ind]]]) 
+            + 'T' 
+            + ':'.join([f'{x:02}' for x in [data['h'].values[ind], data['m'].values[ind], data['s'].values[ind]]]) 
+            + f'.{data["us"].values[ind]}'
+        )
+    unix0 = Time(t_strs, format='isot', scale='utc')
+    data['unix'] = unix0.unix
     data['r'] = data['r']*1e3
 
     return data
@@ -1284,6 +1291,7 @@ def main_collect(args):
     _init_array = np.full((num,), np.nan, dtype=np.float64)
     summary_data = {
         'measurnment_id': _init_array.copy(),
+        't_unix_peak': _init_array.copy(),
         'event_name': event_names,
         'correlated': np.full((num,), False, dtype=bool),
         'object_id': _init_array.copy(),
@@ -1347,6 +1355,7 @@ def main_collect(args):
         summary_data['SNR'][ev_id] = data['SNR'].values[snr_max]
         summary_data['range'][ev_id] = data['r'].values[snr_max]*1e3
         summary_data['doppler'][ev_id] = data['v'].values[snr_max]*1e3
+        summary_data['t_unix_peak'][ev_id] = data['unix'].values[snr_max]
 
         summary_data['proxy_d_inc'][ev_id] = match_data['best_inc']
         summary_data['proxy_d_anom'][ev_id] = match_data['best_anom']
@@ -1370,7 +1379,6 @@ def main_collect(args):
 
         summary_data['estimated_diam_prob'][ev_id] = match_data['diam_prob_dist']
         summary_data['estimated_diam_bins'][ev_id] = match_data['diam_prob_bins']
-
 
         if predict_data is not None:
 
