@@ -79,8 +79,15 @@ def matching_function(data, SNR_sim, low_gain_inds, args):
     use_data = sndb > args.min_snr
     limit_ratio = args.min_snr/np.max(sndb)
 
-    xsn = data['SNR'].values[use_data]
-    ysn = SNR_sim[use_data]
+    sn = data['SNR'].values[use_data]
+    xsn = np.full(sn.shape, 0, dtype=sn.dtype)
+    idx = sn > 0
+    xsn[idx] = np.log10(sn[idx])
+
+    sns = SNR_sim[use_data]
+    ysn = np.full(sns.shape, 0, dtype=sn.dtype)
+    idx = sns > 0
+    ysn[idx] = np.log10(sns[idx])
 
     norm_coef = np.sqrt(np.sum(xsn**2))*np.sqrt(np.sum(ysn**2))
     if np.sum(norm_coef) < 0.0001:
@@ -107,8 +114,8 @@ def matching_function(data, SNR_sim, low_gain_inds, args):
     # Apply weighting based on amount of data used and low snr portion
     points = np.sum(use_data)
     points_weight = (points - np.sum(low_gain_inds[use_data]))/points
-    match *= points_weight
-    match *= low_sn_weight
+    # match *= points_weight
+    # match *= low_sn_weight
 
     meta = [points_weight, low_sn_weight]
 
