@@ -82,15 +82,19 @@ def matching_function(data, SNR_sim, low_gain_inds, args):
     sn = data['SNR'].values[use_data]
     xsn = np.full(sn.shape, 0, dtype=sn.dtype)
     idx = sn > 0
-    xsn[idx] = np.log10(sn[idx])
+    if np.any(idx):
+        xsn[idx] = np.log10(sn[idx]/np.max(sn[idx]))
+    xsn[np.logical_not(idx)] = 0
 
     sns = SNR_sim[use_data]
     ysn = np.full(sns.shape, 0, dtype=sn.dtype)
     idx = sns > 0
-    ysn[idx] = np.log10(sns[idx])
+    if np.any(idx):
+        ysn[idx] = np.log10(sns[idx]/np.max(sns[idx]))
+    ysn[np.logical_not(idx)] = 0
 
     norm_coef = np.sqrt(np.sum(xsn**2))*np.sqrt(np.sum(ysn**2))
-    if np.sum(norm_coef) < 0.0001:
+    if np.sum(norm_coef) < 1e-5:
         match = 0.0
     else:
         match = np.sum(xsn*ysn)/norm_coef
@@ -492,7 +496,10 @@ def main_estimate(args):
     for evi in worker_inds:
         event_name = event_names[evi]
         pbar.set_description(f'Rank-{comm.rank} events [{event_name}]')
-
+        if len(args.event) > 0:
+            if not args.event == event_name:
+                pbar.update(1)
+                continue
         event_indexing = event_data['event_name'] == event_name
         if not np.any(event_indexing):
             if args.v:
@@ -1506,6 +1513,11 @@ def build_estimate_parser(parser):
         expects folder with *.hlist files and an events.txt summary file.')
     parser.add_argument('output', type=str, help='Results output location')
 
+    parser.add_argument(
+        '--event',
+        default='',
+        help='To pick a specific event name.',
+    )
     parser.add_argument(
         '--matches-plotted',
         default=1,
