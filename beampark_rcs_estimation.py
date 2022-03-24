@@ -1321,9 +1321,9 @@ def main_collect(args):
     for ev_id in tqdm(range(num)):
         event_name = event_names[ev_id]
         event_indexing = event_data['event_name'] == event_name
-        if event_name != 'uhf_20211123_120429_800000':
-            continue
-        #HAXOR REMOVE THIS LATER
+        # if event_name != 'uhf_20211123_120429_800000':
+        #     continue
+        # #HAXOR REMOVE THIS LATER
         results_folder = input_pth / event_name
         match_file = results_folder / f'{event_name}_results.pickle'
         predict_file = results_folder / 'correlated_snr_prediction.pickle'
