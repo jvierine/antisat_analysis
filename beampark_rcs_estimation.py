@@ -72,7 +72,35 @@ mpirun -np 6 ./beampark_rcs_estimation.py estimate \
 '''
 
 
-def matching_function(data, SNR_sim, args):
+def offaxis_weighting(angles):
+    return 10 - angles
+
+
+def snr_cut_weighting(sns, off_angles, idx_y, SNR_sim, not_used, snrdb_lim_rel):
+
+    snr_cut_weight = offaxis_weighting(off_angles[not_used])
+
+    if not np.any(not_used):
+        snr_cut_matching = 0
+    elif np.sum(idx_y) > 1:
+        idx_n = SNR_sim[not_used] > 0
+        if np.sum(idx_n) > 1:
+            # Here we check that SNR cutting matches
+            sns_not = np.log10(SNR_sim[not_used][idx_n])*10
+            sns_max = np.log10(np.max(sns[idx_y]))*10
+            too_high = sns_not > sns_max - snrdb_lim_rel
+            snr_cut_matching = sns_not[too_high] - (sns_max - snrdb_lim_rel)
+            snr_diff = snr_cut_matching/snr_cut_weight[idx_n][too_high]
+            snr_cut_matching = np.sqrt(np.sum(snr_diff**2))
+        else:
+            snr_cut_matching = 0
+    else:
+        snr_cut_matching = np.sqrt(np.sum(1.0/snr_cut_weight**2))
+
+    return snr_cut_matching
+
+
+def matching_function(data, SNR_sim, off_angles, args):
     # Filter measurnments
     sndb = np.log10(data['SNR'].values)*10
     use_data = sndb > args.min_snr
@@ -94,30 +122,24 @@ def matching_function(data, SNR_sim, args):
         ysn[np.logical_not(idx_y)] = np.nan
 
     idx = np.logical_not(np.logical_or(np.isnan(xsn), np.isnan(ysn)))
+    not_idx = np.logical_not(idx)
     tot = np.sum(idx)
     if tot > 1:
         # each missed data point counts for the SNR of the measurement in size
-        missed_points = np.sum(xsn[np.logical_not(idx)]**2)
-        match = np.sqrt(np.sum((xsn[idx] - ysn[idx])**2) + missed_points)
+        missed_weight = offaxis_weighting(off_angles[use_data][not_idx])
+        missed_points = np.sum((xsn[not_idx]/missed_weight)**2)
+
+        # then calculate the match (distance now)
+        weight = offaxis_weighting(off_angles[use_data][idx])
+        match = np.sqrt(np.sum(((xsn[idx] - ysn[idx])/weight)**2) + missed_points)
     else:
         missed_points = np.nan
         match = np.nan
 
     not_used = np.logical_not(use_data)
-    if not np.any(not_used):
-        snr_cut_matching = 0
-    elif np.sum(idx_y) > 1:
-        idx_n = SNR_sim[not_used] > 0
-        if np.sum(idx_n) > 1:
-            sns_not = np.log10(SNR_sim[not_used][idx_n])*10
-            sns_max = np.log10(np.max(sns[idx_y]))*10
-            matching_low_snr = np.sum(sns_not < sns_max - snrdb_lim_rel)
-            snr_cut_matching = 1 - matching_low_snr/np.sum(not_used)
-        else:
-            snr_cut_matching = 0
-    else:
-        snr_cut_matching = 1
-    snr_cut_matching *= np.sum(not_used)
+    snr_cut_matching = snr_cut_weighting(
+        sns, off_angles, idx_y, SNR_sim, not_used, snrdb_lim_rel
+    )
 
     match += snr_cut_matching
 
@@ -642,8 +664,13 @@ def main_estimate(args):
         matches = [None for x in range(samps)]
         metas = [None for x in range(samps)]
         for ind in range(samps):
+            sample_off_angles = pyant.coordinates.vector_angle(
+                radar.tx[0].beam.pointing, 
+                pths[ind], 
+                radians=False,
+            )
             matches[ind], metas[ind] = matching_function(
-                data, SNR_sims[ind], args, 
+                data, SNR_sims[ind], sample_off_angles, args, 
             )
 
         matches = np.array(matches)
@@ -1321,9 +1348,6 @@ def main_collect(args):
     for ev_id in tqdm(range(num)):
         event_name = event_names[ev_id]
         event_indexing = event_data['event_name'] == event_name
-        # if event_name != 'uhf_20211123_120429_800000':
-        #     continue
-        # #HAXOR REMOVE THIS LATER
         results_folder = input_pth / event_name
         match_file = results_folder / f'{event_name}_results.pickle'
         predict_file = results_folder / 'correlated_snr_prediction.pickle'
