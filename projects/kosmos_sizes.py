@@ -88,10 +88,6 @@ kosmos_cat = kosmos_select(select)
 size_dist = None
 kosmos_dist = None
 meas_inds = []
-pos_diams = []
-pos_weights = []
-kpos_diams = []
-kpos_weights = []
 for ind in range(len(results['t_unix_peak'])):
     t0 = results['t_unix_peak'][ind]
     if np.isnan(t0):
@@ -100,13 +96,6 @@ for ind in range(len(results['t_unix_peak'])):
     dt = np.abs(t0 - times.unix)
     meas_ind = np.argmin(dt)
     meas_inds.append(meas_ind)
-
-    _ln = len(results['estimated_diams'][ind])
-    if kosmos_cat[meas_ind]:
-        kpos_diams += results['estimated_diams'][ind].tolist()
-        kpos_weights += [1.0/_ln for x in range(_ln)]
-    pos_diams += results['estimated_diams'][ind].tolist()
-    pos_weights += [1.0/_ln for x in range(_ln)]
 
     if size_dist is None:
         size_dist = np.zeros_like(results['estimated_diam_prob'][ind])
@@ -118,33 +107,7 @@ for ind in range(len(results['t_unix_peak'])):
     size_dist += results['estimated_diam_prob'][ind]
 meas_inds = np.array(meas_inds)
 
-pos_diams = np.array(pos_diams)
-pos_weights = np.array(pos_weights)
-kpos_diams = np.array(kpos_diams)
-kpos_weights = np.array(kpos_weights)
-
 kosmos_diams = results['estimated_diam'][kosmos_cat[meas_inds]]
-
-fig, ax = plt.subplots(figsize=(12, 8))
-ax.hist(
-    pos_diams,
-    bins=size_bins, 
-    weights=pos_weights,
-    label='Total',
-    color='b',
-)
-ax.hist(
-    kpos_diams,
-    bins=size_bins, 
-    weights=kpos_weights,
-    label='KOSMOS-1408',
-    color='r',
-)
-ax.set_xlabel('Diameter at peak SNR [log10(cm)]')
-ax.set_ylabel('Frequency (from matching function best peaks) [1]')
-ax.legend()
-fig.savefig(rcs_path / 'kosmos_diam_peaks_dist.png')
-plt.close(fig)
 
 
 fig, ax = plt.subplots(figsize=(12, 8))
@@ -162,7 +125,8 @@ ax.hist(
 )
 
 ax.set_xlabel('Diameter at peak SNR [log10(cm)]')
-ax.set_ylabel('Frequency (from matching function peak) [1]')
+ax.set_ylabel('Frequency (from distance function peak) [1]')
+ax.set_title('Size distribution minimum distance function')
 ax.legend()
 fig.savefig(rcs_path / 'kosmos_diam_peak_dist.png')
 plt.close(fig)
@@ -188,6 +152,7 @@ ax.bar(
 
 ax.set_xlabel('Diameter at peak SNR [log10(cm)]')
 ax.set_ylabel('Frequency (from matching function probability) [1]')
+ax.set_title('Size distribution from distance function distribution')
 ax.legend()
 fig.savefig(rcs_path / 'kosmos_diam_prob_dist.png')
 plt.close(fig)
