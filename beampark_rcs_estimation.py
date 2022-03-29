@@ -143,6 +143,9 @@ def matching_function(data, SNR_sim, off_angles, args):
 
     match += snr_cut_matching
 
+    # Might do this so that matches are more easily compared between events?
+    # match /= np.sum(use_data)
+
     meta = [snr_cut_matching, missed_points]
 
     return match, meta
@@ -1325,6 +1328,7 @@ def main_collect(args):
         'doppler': _init_array.copy(),
         'estimated_offset_angle': _init_array.copy(),
         'estimated_diam': _init_array.copy(),
+        'match': _init_array.copy(),
         'estimated_gain': _init_array.copy(),
         'estimated_diam_prob': [None]*num,
         'estimated_diam_bins': [None]*num,
@@ -1377,6 +1381,7 @@ def main_collect(args):
         summary_data['doppler'][ev_id] = data['v'].values[snr_max]*1e3
         summary_data['t_unix_peak'][ev_id] = data['unix'].values[snr_max]
 
+        summary_data['match'][ev_id] = match_data['best_matches'][0]
         summary_data['proxy_d_inc'][ev_id] = match_data['best_inc']
         summary_data['proxy_d_anom'][ev_id] = match_data['best_anom']
         
