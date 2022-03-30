@@ -73,7 +73,15 @@ mpirun -np 6 ./beampark_rcs_estimation.py estimate \
 
 
 def offaxis_weighting(angles):
-    return 10 - angles
+    '''Weight for offaxis angle, normalized for this set of angles
+    '''
+    if angles.size == 0:
+        return np.ones_like(angles)
+    w = angles.copy()
+    w += 1 - np.min(w)
+    w = 1.0/w
+    w = w/np.sum(w)
+    return w
 
 
 def snr_cut_weighting(sns, off_angles, idx_y, SNR_sim, not_used, snrdb_lim_rel):
@@ -88,14 +96,18 @@ def snr_cut_weighting(sns, off_angles, idx_y, SNR_sim, not_used, snrdb_lim_rel):
             # Here we check that SNR cutting matches
             sns_not = np.log10(SNR_sim[not_used][idx_n])*10
             sns_max = np.log10(np.max(sns[idx_y]))*10
-            too_high = sns_not > sns_max - snrdb_lim_rel
-            snr_cut_matching = sns_not[too_high] - (sns_max - snrdb_lim_rel)
-            snr_diff = snr_cut_matching/snr_cut_weight[idx_n][too_high]
-            snr_cut_matching = np.sqrt(np.sum(snr_diff**2))
+            
+            sns_lim = sns_max - snrdb_lim_rel
+            too_high = sns_not > sns_lim
+
+            snr_cut_matching = sns_not[too_high] - sns_lim
+            snr_diff = snr_cut_matching*snr_cut_weight[idx_n][too_high]
+            
+            snr_cut_matching = np.sum(snr_diff**2)
         else:
             snr_cut_matching = 0
     else:
-        snr_cut_matching = np.sqrt(np.sum(1.0/snr_cut_weight**2))
+        snr_cut_matching = np.nan
 
     return snr_cut_matching
 
@@ -105,7 +117,7 @@ def matching_function(data, SNR_sim, off_angles, args):
     sndb = np.log10(data['SNR'].values)*10
     use_data = sndb > args.min_snr
     max_sndb_m = np.log10(np.max(data['SNR'].values))*10
-    snrdb_lim_rel = -(max_sndb_m - args.min_snr)
+    snrdb_lim_rel = max_sndb_m - args.min_snr
 
     sn = data['SNR'].values[use_data]
     xsn = np.full(sn.shape, np.nan, dtype=sn.dtype)
@@ -127,11 +139,11 @@ def matching_function(data, SNR_sim, off_angles, args):
     if tot > 1:
         # each missed data point counts for the SNR of the measurement in size
         missed_weight = offaxis_weighting(off_angles[use_data][not_idx])
-        missed_points = np.sum((xsn[not_idx]/missed_weight)**2)
+        missed_points = np.sum((xsn[not_idx]*missed_weight)**2)
 
         # then calculate the match (distance now)
         weight = offaxis_weighting(off_angles[use_data][idx])
-        match = np.sqrt(np.sum(((xsn[idx] - ysn[idx])/weight)**2) + missed_points)
+        match = np.sum(((xsn[idx] - ysn[idx])*weight)**2) + missed_points
     else:
         missed_points = np.nan
         match = np.nan
@@ -142,10 +154,10 @@ def matching_function(data, SNR_sim, off_angles, args):
     )
 
     match += snr_cut_matching
+    match = np.sqrt(match)
 
     # Might do this so that matches are more easily compared between events?
-    # match /= np.sum(use_data)
-
+    match /= np.sum(use_data)
     meta = [snr_cut_matching, missed_points]
 
     return match, meta
