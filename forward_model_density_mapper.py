@@ -187,7 +187,8 @@ class ForwardModel(sorts.Simulation):
         )
 
         state = obj.get_state(t)
-        interpolator = sorts.interpolation.Legendre8(state, t)
+        t_rel = self.epoch - obj.epoch + TimeDelta(t, format='sec')
+        interpolator = sorts.interpolation.Legendre8(state, t_rel)
 
         passes = self.scheduler.radar.find_passes(
             t, 

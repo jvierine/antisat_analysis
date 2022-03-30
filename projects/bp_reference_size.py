@@ -9,6 +9,7 @@ from sorts.population import master_catalog, master_catalog_factor
 epoch = Time('2021-11-23 12:00:00', format='iso')
 master_path = Path.home() / 'data/master_2009/celn_20090501_00.sim'
 t_stop = 3600.0
+snr_limit = 33.0
 
 HERE = Path(__file__).parent.resolve()
 OUTPUT = HERE / 'output' / 'russian_asat'
@@ -82,10 +83,11 @@ class ForwardModel(sorts.Simulation):
     @sorts.cached_step(caches='npy')
     def simulate(self, index, item, **kwargs):
         obj = self.population.get_object(item)
-        t = np.arange(0, t_stop, 10)
+        t = np.arange(0.0, t_stop, 10.0)
 
         state = obj.get_state(t)
-        interpolator = sorts.interpolation.Legendre8(state, t)
+        t_rel = self.epoch - obj.epoch + TimeDelta(t, format='sec')
+        interpolator = sorts.interpolation.Legendre8(state, t_rel.sec)
 
         passes = self.scheduler.radar.find_passes(
             t, 
@@ -151,8 +153,20 @@ if not sim_data_file.is_file():
 
 sim_data = np.load(sim_data_file)
 
+keep = sim_data['snr'] > snr_limit
+objs = sim_data['oid'][keep]
+
+fig, ax = plt.subplots()
+ax.hist(np.log10(pop['d'][objs]*1e2), 100)
+ax.set_xlabel('Diameter [log10(cm)]')
+ax.set_ylabel('Frequency')
+fig.savefig(out_pth / 'master_observed_size_dist.png')
+plt.close(fig)
+
+
 fig, ax = plt.subplots()
 ax.hist(np.log10(pop['d']*1e2), 100)
 ax.set_xlabel('Diameter [log10(cm)]')
 ax.set_ylabel('Frequency')
 fig.savefig(out_pth / 'master_size_dist.png')
+plt.close(fig)
