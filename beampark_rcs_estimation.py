@@ -157,7 +157,7 @@ def matching_function(data, SNR_sim, off_angles, args):
     match = np.sqrt(match)
 
     # Might do this so that matches are more easily compared between events?
-    match /= np.sum(use_data)
+    match = match/len(SNR_sim)
     meta = [snr_cut_matching, missed_points]
 
     return match, meta
@@ -770,6 +770,19 @@ def main_estimate(args):
             weights=diams_prob,
         )
 
+        boresight_diam = sorts.signals.hard_target_diameter(
+            radar.tx[0].beam.gain(radar.tx[0].beam.pointing), 
+            radar.tx[0].beam.gain(radar.tx[0].beam.pointing),
+            radar.tx[0].wavelength,
+            radar.tx[0].power,
+            data['r'].values[snr_max], 
+            data['r'].values[snr_max],
+            data['SNR'].values[snr_max], 
+            bandwidth=radar.tx[0].coh_int_bandwidth,
+            rx_noise_temp=radar.rx[0].noise,
+            radar_albedo=1.0,
+        )
+
         if args.v:
             print('== Best match ==')
             print(f'Inclination offset {incs[best_ind]} deg')
@@ -784,6 +797,7 @@ def main_estimate(args):
             best_offaxis = best_offaxis,
             best_path = pths[best_ind],
             paths = pths,
+            boresight_diam = boresight_diam,
             best_inc = incs[best_ind],
             best_anom = nus[best_ind],
             matches = matches_mat,
@@ -1340,6 +1354,8 @@ def main_collect(args):
         'doppler': _init_array.copy(),
         'estimated_offset_angle': _init_array.copy(),
         'estimated_diam': _init_array.copy(),
+        'event_boresight_diam': _init_array.copy(),
+        'boresight_diam': _init_array.copy(),
         'match': _init_array.copy(),
         'estimated_gain': _init_array.copy(),
         'estimated_diam_prob': [None]*num,
@@ -1394,6 +1410,8 @@ def main_collect(args):
         summary_data['t_unix_peak'][ev_id] = data['unix'].values[snr_max]
 
         summary_data['match'][ev_id] = match_data['best_matches'][0]
+        summary_data['boresight_diam'][ev_id] = match_data['boresight_diam']
+        summary_data['event_boresight_diam'][ev_id] = event_row['DI'].values[0]*1e-2
         summary_data['proxy_d_inc'][ev_id] = match_data['best_inc']
         summary_data['proxy_d_anom'][ev_id] = match_data['best_anom']
         

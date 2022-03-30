@@ -4,14 +4,8 @@ import numpy as np
 import pickle
 from pathlib import Path
 import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-from matplotlib.gridspec import GridSpec
-from pprint import pprint
-# plt.style.use('dark_background')
 
-import sorts
-import pyorb
-import pyant
+from pprint import pprint
 
 HERE = Path(__file__).parent.resolve()
 OUTPUT = HERE / 'output' / 'russian_asat'
@@ -76,7 +70,7 @@ def load_data(file):
 
 radar = 'uhf'
 ind = 0
-filter_limit = 0.5
+filter_limit = 0.015
 
 select = np.load(category_files[radar][ind])
 data_file = paths['data_paths'][radar][ind]
@@ -105,10 +99,13 @@ correlated_dist = None
 uncorrelated_dist = None
 predicted_dist = None
 bin_mids = None
+kosmos_dist_peaks = []
+size_dist_peaks = []
 size_means = []
 kosmos_means = []
 correlated_means = []
 meas_inds = []
+
 for ind in range(len(results['t_unix_peak'])):
     t0 = results['t_unix_peak'][ind]
     if np.isnan(t0):
@@ -120,33 +117,39 @@ for ind in range(len(results['t_unix_peak'])):
     if not keep_inds[ind]:
         continue
 
+    diam_dist = results['estimated_diam_prob'][ind]
+
     if size_dist is None:
-        size_dist = np.zeros_like(results['estimated_diam_prob'][ind])
-        kosmos_dist = np.zeros_like(results['estimated_diam_prob'][ind])
-        correlated_dist = np.zeros_like(results['estimated_diam_prob'][ind])
-        uncorrelated_dist = np.zeros_like(results['estimated_diam_prob'][ind])
-        predicted_dist = np.zeros_like(results['estimated_diam_prob'][ind])
+        size_dist = np.zeros_like(diam_dist)
+        kosmos_dist = np.zeros_like(diam_dist)
+        correlated_dist = np.zeros_like(diam_dist)
+        uncorrelated_dist = np.zeros_like(diam_dist)
+        predicted_dist = np.zeros_like(diam_dist)
         size_bins = np.copy(results['estimated_diam_bins'][ind])
         bin_mids = (size_bins[:-1] + size_bins[1:])*0.5
 
     mean_d = np.average(
         bin_mids, 
-        weights=results['estimated_diam_prob'][ind],
+        weights=diam_dist,
     )
+
     if not np.isnan(results['predicted_diam'][ind]):
-        predicted_dist += results['estimated_diam_prob'][ind]
+        predicted_dist += diam_dist
     if kosmos_cat[meas_ind]:
+        kosmos_dist_peaks.append(bin_mids[np.argmax(diam_dist)])
         kosmos_means.append(mean_d)
-        kosmos_dist += results['estimated_diam_prob'][ind]
+        kosmos_dist += diam_dist
     if correlated_cat[meas_ind]:
         correlated_means.append(mean_d)
-        correlated_dist += results['estimated_diam_prob'][ind]
+        correlated_dist += diam_dist
     else:
-        uncorrelated_dist += results['estimated_diam_prob'][ind]
-
+        uncorrelated_dist += diam_dist
+    size_dist_peaks.append(bin_mids[np.argmax(diam_dist)])
     size_means.append(mean_d)
-    size_dist += results['estimated_diam_prob'][ind]
+    size_dist += diam_dist
 meas_inds = np.array(meas_inds)
+kosmos_dist_peaks = np.array(kosmos_dist_peaks)
+size_dist_peaks = np.array(size_dist_peaks)
 
 kosmos_diams = results['estimated_diam'][kosmos_cat[meas_inds]]
 
@@ -191,7 +194,27 @@ for ax in axes[:, 0]:
 fig.suptitle('Size distribution estimated versus predicted')
 fig.savefig(rcs_plot_path / 'predicted_vs_estimated_diam.png')
 plt.close(fig)
-exit()
+
+fig, axes = plt.subplots(2, 1, figsize=(12, 8))
+axes[0].hist(
+    np.log10(results['boresight_diam']*1e2),
+    bins=size_bins, 
+    color='b',
+)
+axes[0].set_title('Estimated')
+axes[1].hist(
+    np.log10(results['event_boresight_diam']*1e2),
+    bins=size_bins, 
+    color='r',
+)
+axes[1].set_title('Events file')
+axes[1].set_xlabel('Diameter at peak SNR [log10(cm)]')
+axes[0].set_ylabel('Frequency [1]')
+axes[1].set_ylabel('Frequency [1]')
+fig.suptitle('Minimum possible diameter distribution')
+fig.savefig(rcs_plot_path / 'events_diam_vs_boresight_diam.png')
+plt.close(fig)
+
 
 fig, ax = plt.subplots(figsize=(12, 8))
 ax.hist(
@@ -213,6 +236,29 @@ ax.set_title('Size distribution minimum distance function')
 ax.legend()
 fig.savefig(rcs_plot_path / 'kosmos_diam_peak_dist.png')
 plt.close(fig)
+
+
+fig, ax = plt.subplots(figsize=(12, 8))
+ax.hist(
+    size_dist_peaks,
+    bins=size_bins, 
+    label='Total',
+    color='b',
+)
+ax.hist(
+    kosmos_dist_peaks,
+    bins=size_bins, 
+    label='KOSMOS-1408',
+    color='r',
+)
+
+ax.set_xlabel('Diameter at peak SNR [log10(cm)]')
+ax.set_ylabel('Frequency (from distance function probability peak) [1]')
+ax.set_title('Size distribution from peak of probability distribution')
+ax.legend()
+fig.savefig(rcs_plot_path / 'kosmos_diam_prob_dist_peak_dist.png')
+plt.close(fig)
+
 
 not_kosmos_picks = np.logical_and(np.logical_not(kosmos_cat)[meas_inds], keep_inds)
 fig, axes = plt.subplots(2, 1, figsize=(12, 8))
@@ -444,7 +490,7 @@ ax.scatter(
     label='Rejected',
 )
 
-
+ax.axvline(filter_limit, color='r')
 ax.set_xlabel('Distance function')
 ax.set_ylabel('Diameter at peak SNR [log10(cm)]')
 ax.set_title('Distance function versus estimated diameter')

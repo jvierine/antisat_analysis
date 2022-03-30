@@ -1,15 +1,11 @@
 #!/usr/bin/env python
 
 from pathlib import Path
-import subprocess
-
 import numpy as np
 import matplotlib.pyplot as plt
-from tqdm import tqdm
 
 import sorts
 import pyorb
-import orekit
 
 try:
     from mpi4py import MPI
@@ -47,7 +43,7 @@ print(f'Using {OUTPUT} as output')
 
 tle_file = OUTPUT / 'kosmos-1408-2021-11-15.tle'
 orekit_data = OUTPUT / 'orekit-data-master.zip'
-cache_file = OUTPUT / 'kosmos-1408_orekit_core_propagated.npy'
+cache_file = OUTPUT / 'kosmos-1408_orekit_core_propagated.npz'
 plot_folder = OUTPUT / 'kosmos-1408_orekit_propagated'
 plot_folder.mkdir(exist_ok=True)
 
@@ -74,6 +70,10 @@ d = 1.0
 A = np.pi*(d*0.5)**2
 t_vec = np.arange(0, target_t, snapshot_interval, dtype=np.float64)
 
+elems = {}
+elems['epoch_unix'] = np.array(tle_obj.epoch.unix)
+elems['t'] = t_vec
+
 prop = sorts.propagator.Orekit(
     orekit_data=orekit_data,
     settings=settings,
@@ -86,10 +86,33 @@ states = prop.propagate(
 
 orb = pyorb.Orbit(
     M0=pyorb.M_earth, m=m, 
-    num=1, epoch=mjd0, 
+    num=len(t_vec), epoch=mjd0, 
     degrees=True,
     cartesian=states,
+    type='mean',
 )
+elems.update({key: getattr(orb, key) for key in orb.KEPLER})
 
-plt.plot(t_vec/(3600.0*24), orb.Omega)
-plt.show()
+np.savez(cache_file, **elems)
+
+t_d = t_vec/(3600.0*24)
+
+fig, axes = plt.subplots(2, 3, figsize=(12, 8), sharex=True)
+axes[0, 0].plot(t_d, orb.a*1e-3)
+axes[0, 0].set_ylabel('Semi-major-axis [km]')
+axes[0, 1].plot(t_d, orb.e)
+axes[0, 1].set_ylabel('Eccentricity [1]')
+axes[0, 2].plot(t_d, orb.i)
+axes[0, 2].set_ylabel('Inclination [deg]')
+
+axes[1, 0].plot(t_d, orb.omega)
+axes[1, 0].set_ylabel('Argument of periapsis [deg]')
+axes[1, 1].plot(t_d, orb.Omega)
+axes[1, 1].set_ylabel('Longitude of ascending node [km]')
+axes[1, 2].plot(t_d, orb.anom)
+axes[1, 2].set_ylabel('Mean anomaly [deg]')
+for ax in axes[-1, :]:
+    ax.set_xlabel('Time [d]')
+
+fig.savefig(plot_folder / 'orbs_v_t.png')
+plt.close(fig)

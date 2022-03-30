@@ -27,8 +27,14 @@ with open(OUTPUT / 'paths.pickle', 'rb') as fh:
     paths = pickle.load(fh)
 
 
+kosmos_prediction_file = OUTPUT / 'kosmos-1408_orekit_core_propagated.npz'
+kosmos_prediction = np.load(kosmos_prediction_file)
+print(kosmos_prediction)
+kosmos_Omega = sciint.interp1d(kosmos_prediction['t'], kosmos_prediction['Omega'])
+
 zero_res = 10000
 orb_samp = 300
+clobber = False
 
 
 def get_range_and_range_rate(station, states):
@@ -188,16 +194,19 @@ def theta_orbit(r_teme, epoch, theta):
 
 
 orb_data = {}
+orb_sols = {}
 for radar in paths['data_paths']:
     orb_data[radar] = []
+    orb_sols[radar] = []
 
-    for ind in range(len(paths['data_paths'][radar])):
+    for ind in tqdm(range(len(paths['data_paths'][radar])), position=1):
 
         cache_path = save_paths[radar][ind] / 'kep_elements.pickle'
-        if cache_path.is_file():
+        if cache_path.is_file() and not clobber:
             with open(cache_path, 'rb') as fh:
-                kepler_elems = pickle.load(fh)
+                kepler_elems, matching_solutions = pickle.load(fh)
             orb_data[radar].append(kepler_elems)
+            orb_sols[radar].append(matching_solutions)
             continue
 
         tx = radar_info[radar][ind][1]
@@ -211,9 +220,13 @@ for radar in paths['data_paths']:
         t, r, v, snr, dur, diam = load_data(data_file)
         times = Time(t, format='unix', scale='utc')
 
+        kosmos_dt = times - Time(kosmos_prediction['epoch_unix'], format='unix', scale='utc')
+        predict_Omega = kosmos_Omega(kosmos_dt.sec)
+
         kepler_elems = np.full((6, 2, len(t)), np.nan, dtype=np.float64)
+        matching_solutions = np.full((len(t), ), np.nan, dtype=np.int64)
         
-        for evi in tqdm(range(len(t))):
+        for evi in tqdm(range(len(t)), position=0):
             r_obj = r[evi]*1e3
             v_obj = v[evi]*1e3
             r_ecef = ecef_st + r_obj*ecef_point
@@ -284,11 +297,50 @@ for radar in paths['data_paths']:
             det_orbs = theta_orbit(r_teme, epoch, roots)
             det_orbs.calculate_kepler()
 
+            if len(roots) > 1:
+                matching_solutions[evi] = np.argmin(np.abs(det_orbs.Omega - predict_Omega[evi]))
+            else:
+                matching_solutions[evi] = 0
+
             for ri in range(len(roots)):
                 kepler_elems[:, ri, evi] = det_orbs.kepler[:, ri]
         with open(cache_path, 'wb') as fh:
-            pickle.dump(kepler_elems, fh)
+            pickle.dump([kepler_elems, matching_solutions], fh)
         orb_data[radar].append(kepler_elems)
+        orb_sols[radar].append(matching_solutions)
+
+for radar in orb_sols:
+    for ind in range(len(orb_sols[radar])):
+        nan_inds = np.logical_or(
+            np.isnan(orb_sols[radar][ind]), 
+            orb_sols[radar][ind] < 0
+        )
+        orb_sols[radar][ind][nan_inds] = 0
+
+
+def plot_single_kepler(keps, solution_select, select):
+
+    bins = int(np.round(np.sqrt(keps.shape[2])))
+    
+    fig, axes = plt.subplots(1, 3, sharey='all')
+
+    use_keps = np.empty((keps.shape[0], keps.shape[2]), dtype=keps.dtype)
+    for ind, sol in enumerate(solution_select):
+        use_keps[:, ind] = keps[:, sol, ind]
+    selects = np.logical_not(np.any(np.isnan(use_keps), axis=0))
+    print(f'Fraction not calculated {1 - np.sum(selects)/len(selects)}')
+
+    selects = np.logical_and(selects, select)
+    axes[0].hist(use_keps[0, selects]*1e-3, bins=bins, label='KOSMOS-1408')
+    axes[1].hist(use_keps[2, selects], bins=bins)
+    axes[2].hist(use_keps[4, selects], bins=bins)
+    axes[0].legend()
+    axes[0].set_xlabel('Semi-major-axis [km]')
+    axes[0].set_ylabel('Frequency')
+    axes[1].set_xlabel('Inclination [deg]')
+    axes[2].set_xlabel('RAAN [deg]')
+    
+    return fig, axes
 
 
 def plot_kepler(keps, select=None):
@@ -332,29 +384,48 @@ def plot_kepler(keps, select=None):
 
 all_kepler_elems = []
 all_selects = []
+all_solutions = []
+all_select_solutions = []
 for radar in save_paths:
     for ind in range(len(save_paths[radar])):
         select = np.load(category_files[radar][ind])
         all_selects.append(select)
 
         kepler_elems = orb_data[radar][ind]
+        select_solutions = orb_sols[radar][ind]
         all_kepler_elems.append(kepler_elems)
+        all_select_solutions.append(select_solutions)
         fig, axes = plot_kepler(kepler_elems)
-        fig.suptitle(f'{radar_title[radar][ind]} Circular-orbits')
+        fig.suptitle(f'{radar_title[radar][ind]} circular-orbits')
         fig.savefig(save_paths[radar][ind] / f'{radar_title[radar][ind].replace(" ", "_")}_kep_elements.png')
+        plt.close(fig)
 
         fig, axes = plot_kepler(kepler_elems, select=kosmos_select(select))
-        fig.suptitle(f'{radar_title[radar][ind]} Circular-orbits')
+        fig.suptitle(f'{radar_title[radar][ind]} circular-orbits')
         fig.savefig(save_paths[radar][ind] / f'{radar_title[radar][ind].replace(" ", "_")}_kosmos_kep_elements.png')
+        plt.close(fig)
+
+        fig, axes = plot_single_kepler(kepler_elems, select_solutions, kosmos_select(select))
+        fig.suptitle(f'{radar_title[radar][ind]} disambiguated circular-orbits')
+        fig.savefig(save_paths[radar][ind] / f'{radar_title[radar][ind].replace(" ", "_")}_kosmos_kep_elements_disambiguated.png')
+        plt.close(fig)
 
 
 all_kepler_elems = np.concatenate(all_kepler_elems, axis=2)
 all_selects = np.concatenate(all_selects, axis=0)
+all_select_solutions = np.concatenate(all_select_solutions, axis=0)
 
 fig, axes = plot_kepler(all_kepler_elems)
-fig.suptitle('EISCAT campagins 2021-11-[19-29] circular-orbits')
+fig.suptitle('EISCAT campaigns 2021-11-[19-29] circular-orbits')
 fig.savefig(tot_pth / 'all_kep_elements.png')
+plt.close(fig)
 
 fig, axes = plot_kepler(all_kepler_elems, select=kosmos_select(all_selects))
-fig.suptitle('EISCAT campagins 2021-11-[19-29] circular-orbits')
+fig.suptitle('EISCAT campaigns 2021-11-[19-29] circular-orbits')
 fig.savefig(tot_pth / 'all_kosmos_kep_elements.png')
+plt.close(fig)
+
+fig, axes = plot_single_kepler(all_kepler_elems, all_select_solutions, kosmos_select(all_selects))
+fig.suptitle('EISCAT campaigns 2021-11-[19-29] disambiguated circular-orbits')
+fig.savefig(tot_pth / 'all_kosmos_kep_elements_disambiguated.png')
+plt.close(fig)
