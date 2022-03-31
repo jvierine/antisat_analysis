@@ -89,7 +89,7 @@ def get_spade_data(files, verbose=False):
     return data
 
 
-def read_spade(target_dir, output_h5, verbose=False):
+def read_spade(target_dir, output_h5, SNR_lim, verbose=False):
 
     files = list(target_dir.glob('**/*.txt'))
     files.sort()
@@ -110,9 +110,9 @@ def read_spade(target_dir, output_h5, verbose=False):
 
         sn = row['RT']**2.0
 
-        if sn <= MIN_SNR:
+        if sn <= SNR_lim:
             if verbose:
-                print(f'Skipping row {ind}: rt**2.0 = sn = {sn} <= {MIN_SNR}')
+                print(f'Skipping row {ind}: rt**2.0 = sn = {sn} <= {SNR_lim}')
             continue
         else:
             if verbose:
@@ -160,8 +160,19 @@ def main(input_args=None):
     parser = argparse.ArgumentParser(
         description='Convert EISCAT spade experiment results to a single h5 file',
     )
-    parser.add_argument('input_directory', type=str, help='Observation data location')
-    parser.add_argument('output_h5', type=str, help='Results output location')
+    parser.add_argument(
+        'input_directory', 
+        type=str, help='Observation data location',
+    )
+    parser.add_argument(
+        'output_h5', 
+        type=str, help='Results output location',
+    )
+    parser.add_argument(
+        '-m', '--min-snr', 
+        default=MIN_SNR,
+        type=float, help=f'Minimum (linear) SNR of events to keep, defaults to {MIN_SNR}.',
+    )
 
     if input_args is None:
         args = parser.parse_args()
@@ -171,7 +182,7 @@ def main(input_args=None):
     output_pth = pathlib.Path(args.output_h5).resolve()
     input_pth = pathlib.Path(args.input_directory).resolve()
 
-    read_spade(input_pth, output_pth, verbose=True)
+    read_spade(input_pth, output_pth, args.min_snr, verbose=True)
 
 
 if __name__ == '__main__':
