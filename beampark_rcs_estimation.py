@@ -800,6 +800,7 @@ def main_estimate(args):
             boresight_diam = boresight_diam,
             best_inc = incs[best_ind],
             best_anom = nus[best_ind],
+            snr_max_ind = snr_max,
             matches = matches_mat,
             snr_cut_matching = snr_cut_matching,
             missed_points = missed_points,
@@ -1357,7 +1358,9 @@ def main_collect(args):
         'event_boresight_diam': _init_array.copy(),
         'boresight_diam': _init_array.copy(),
         'match': _init_array.copy(),
+        'snr_max_ind': np.full((num,), 0, dtype=np.int64),
         'estimated_gain': _init_array.copy(),
+        'estimated_path': [None]*num,
         'estimated_diam_prob': [None]*num,
         'estimated_diam_bins': [None]*num,
         'proxy_d_inc': _init_array.copy(),
@@ -1404,6 +1407,7 @@ def main_collect(args):
         else:
             predict_data = None
 
+        summary_data['snr_max_ind'][ev_id] = snr_max
         summary_data['SNR'][ev_id] = data['SNR'].values[snr_max]
         summary_data['range'][ev_id] = data['r'].values[snr_max]*1e3
         summary_data['doppler'][ev_id] = data['v'].values[snr_max]*1e3
@@ -1418,6 +1422,7 @@ def main_collect(args):
         summary_data['estimated_offset_angle'][ev_id] = match_data['best_offaxis'][0]
         summary_data['estimated_diam'][ev_id] = match_data['best_diams'][0]
         summary_data['estimated_gain'][ev_id] = match_data['best_gains'][0]
+        summary_data['estimated_path'][ev_id] = match_data['best_path']
 
         if size_dist is None:
             size_dist = np.zeros_like(match_data['diam_prob_dist'])

@@ -7,6 +7,9 @@ import matplotlib.pyplot as plt
 
 from pprint import pprint
 
+import sorts
+import pyant
+
 HERE = Path(__file__).parent.resolve()
 OUTPUT = HERE / 'output' / 'russian_asat'
 print(f'Using {OUTPUT} as output')
@@ -17,6 +20,12 @@ tot_pth.mkdir(exist_ok=True)
 with open(OUTPUT / 'paths.pickle', 'rb') as fh:
     paths = pickle.load(fh)
 
+tx = sorts.radars.eiscat_uhf.tx[0]
+d_separatrix = tx.beam.wavelength/(np.pi*np.sqrt(3.0))
+tx.beam.sph_point(
+    azimuth=90, 
+    elevation=75,
+)
 
 category_files = {}
 dates = {}
@@ -105,6 +114,7 @@ size_means = []
 kosmos_means = []
 correlated_means = []
 meas_inds = []
+k_vecs = []
 
 for ind in range(len(results['t_unix_peak'])):
     t0 = results['t_unix_peak'][ind]
@@ -116,6 +126,9 @@ for ind in range(len(results['t_unix_peak'])):
     meas_inds.append(meas_ind)
     if not keep_inds[ind]:
         continue
+
+    max_snr_ind = results['snr_max_ind'][ind]
+    k_vecs.append(results['estimated_path'][ind][:, max_snr_ind])
 
     diam_dist = results['estimated_diam_prob'][ind]
 
@@ -150,11 +163,117 @@ for ind in range(len(results['t_unix_peak'])):
 meas_inds = np.array(meas_inds)
 kosmos_dist_peaks = np.array(kosmos_dist_peaks)
 size_dist_peaks = np.array(size_dist_peaks)
+k_vecs = np.array(k_vecs).T
 
 kosmos_diams = results['estimated_diam'][kosmos_cat[meas_inds]]
 
 have_predictions = np.logical_not(np.isnan(results['predicted_diam']))
 keep_stats = np.logical_and(have_predictions, keep_inds)
+
+
+fig, ax = plt.subplots(figsize=(12, 8))
+ax2 = ax.twinx()
+
+zenith_ang = pyant.coordinates.vector_angle(tx.beam.pointing, k_vecs, radians=False)
+
+beam0 = tx.beam.copy()
+
+beam0.sph_point(
+    azimuth=0, 
+    elevation=90,
+)
+theta = np.linspace(90, 85, num=1000)
+_kv = np.zeros((3, len(theta)))
+_kv[1, :] = theta
+_kv[2, :] = 1
+_kv = pyant.coordinates.sph_to_cart(_kv, radians=False)
+S = beam0.gain(_kv)
+
+p1, = ax2.plot(90 - theta, np.log10(S)*10.0, color='r')
+ax.hist(zenith_ang)
+
+ax2.yaxis.label.set_color(p1.get_color())
+ax2.tick_params(axis='y', colors=p1.get_color())
+ax.set_title('Estimated peak SNR location')
+ax.set_xlabel('Off-axis angle [deg]')
+ax.set_ylabel('Frequency')
+ax2.set_ylabel('Gain [dB]')
+fig.savefig(rcs_plot_path / 'estimated_offaxis_angles.png')
+plt.close(fig)
+
+side_lobe = 0.85
+fig, ax = plt.subplots(figsize=(12, 8))
+pyant.plotting.gain_heatmap(tx.beam, min_elevation=85.0, ax=ax)
+ax.plot(
+    k_vecs[0, zenith_ang < side_lobe], 
+    k_vecs[1, zenith_ang < side_lobe], 
+    '.k', 
+    label=f'Main lobe (N={np.sum(zenith_ang < side_lobe)})'
+)
+ax.plot(
+    k_vecs[0, zenith_ang >= side_lobe], 
+    k_vecs[1, zenith_ang >= side_lobe], 
+    'xk', 
+    label=f'Side lobes (N={np.sum(zenith_ang >= side_lobe)})'
+)
+ax.legend()
+ax.set_title('Estimated peak SNR location')
+ax.set_xlabel('kx [1]')
+ax.set_ylabel('ky [1]')
+fig.savefig(rcs_plot_path / 'estimated_k_vecs.png')
+plt.close(fig)
+
+
+logd_separatrix = np.log10(d_separatrix*1e2)
+fig, axes = plt.subplots(2, 1, figsize=(12, 8))
+_d = np.log10(results['boresight_diam']*1e2)
+_rcs = sorts.signals.hard_target_rcs(
+    tx.beam.wavelength, 
+    results['boresight_diam'],
+)
+_rcs = np.log10(_rcs*1e4)
+axes[0].scatter(
+    _d[_d < logd_separatrix],
+    _rcs[_d < logd_separatrix],
+    color='b',
+    label=f'Rayleigh (N={np.sum(_d < logd_separatrix)})',
+)
+axes[0].scatter(
+    _d[_d >= logd_separatrix],
+    _rcs[_d >= logd_separatrix],
+    color='r',
+    label=f'Optical (N={np.sum(_d >= logd_separatrix)})',
+)
+axes[0].legend()
+axes[0].set_title('Minimum diameter')
+_d = np.log10(results['estimated_diam'][keep_inds]*1e2)
+_rcs = sorts.signals.hard_target_rcs(
+    tx.beam.wavelength, 
+    results['estimated_diam'][keep_inds],
+)
+_rcs = np.log10(_rcs*1e4)
+axes[1].scatter(
+    _d[_d < logd_separatrix],
+    _rcs[_d < logd_separatrix],
+    color='b',
+    label=f'Rayleigh (N={np.sum(_d < logd_separatrix)})',
+)
+axes[1].scatter(
+    _d[_d >= logd_separatrix],
+    _rcs[_d >= logd_separatrix],
+    color='r',
+    label=f'Optical (N={np.sum(_d >= logd_separatrix)})',
+)
+axes[1].legend()
+axes[1].set_title('Estimated diameter')
+axes[1].set_xlabel('Diameter at peak SNR [log10(cm)]')
+axes[0].set_ylabel('RCS at peak SNR [log10(cm^2)]')
+axes[1].set_ylabel('RCS at peak SNR [log10(cm^2)]')
+fig.suptitle('Scattering function region comparison')
+fig.savefig(rcs_plot_path / 'scattering_estimated_vs_boresight_diam.png')
+plt.close(fig)
+
+
 fig, axes = plt.subplots(2, 2, figsize=(12, 8), sharey=True, sharex=True)
 axes[0, 0].hist(
     np.log10(results['predicted_diam'][keep_stats]*1e2),

@@ -9,7 +9,7 @@ from sorts.population import master_catalog, master_catalog_factor
 epoch = Time('2021-11-23 12:00:00', format='iso')
 master_path = Path.home() / 'data/master_2009/celn_20090501_00.sim'
 t_stop = 3600.0
-snr_limit = 33.0
+snr_lim = 10.0
 
 HERE = Path(__file__).parent.resolve()
 OUTPUT = HERE / 'output' / 'russian_asat'
@@ -51,7 +51,10 @@ class ForwardModel(sorts.Simulation):
         super().__init__(*args, **kwargs)
 
         self.cols = ['t', 'range', 'range_rate', 'snr']
-        self._dtype = [('oid', np.int64)] + [(key, np.float64) for key in self.cols]
+        self.k_vars = ['kx', 'ky', 'kz']
+        self._dtype = [('oid', np.int64)]
+        self._dtype += [(key, np.float64) for key in self.cols]
+        self._dtype += [(key, np.float64) for key in self.k_vars]
         self.collected_data = np.empty((0,), dtype=self._dtype)
 
         self.steps['simulate'] = self.simulate
@@ -73,6 +76,8 @@ class ForwardModel(sorts.Simulation):
             max_snr_ind = np.argmax(pd['snr'])
             for key in self.cols:
                 new_data[key][ind] = pd[key][max_snr_ind]
+            for ki, key in enumerate(self.k_vars):
+                new_data[key][ind] = pd['tx_k'][ki, max_snr_ind]
         return new_data
 
     def save_collected(self, **kwargs):
@@ -153,16 +158,30 @@ if not sim_data_file.is_file():
 
 sim_data = np.load(sim_data_file)
 
-keep = sim_data['snr'] > snr_limit
+keep = sim_data['snr'] > snr_lim
 objs = sim_data['oid'][keep]
 
 fig, ax = plt.subplots()
-ax.hist(np.log10(pop['d'][objs]*1e2), 100)
+ax.hist(np.log10(pop['d'][objs]*1e2), 2*int(np.sqrt(len(objs))))
 ax.set_xlabel('Diameter [log10(cm)]')
 ax.set_ylabel('Frequency')
 fig.savefig(out_pth / 'master_observed_size_dist.png')
 plt.close(fig)
 
+fig, ax = plt.subplots()
+ax.scatter(np.log10(pop['d'][objs]*1e2), np.log10(sim_data['snr'][keep])*10, 2)
+ax.set_xlabel('Diameter [log10(cm)]')
+ax.set_ylabel('SNR [dB]')
+fig.savefig(out_pth / 'master_observed_size_vs_snr.png')
+plt.close(fig)
+
+fig, ax = plt.subplots()
+ax.scatter(np.log10(pop['d'][sim_data['oid']]*1e2), np.log10(sim_data['snr'])*10, 2)
+ax.axhline(np.log10(snr_lim)*10, color='r')
+ax.set_xlabel('Diameter [log10(cm)]')
+ax.set_ylabel('SNR [dB]')
+fig.savefig(out_pth / 'master_size_vs_snr.png')
+plt.close(fig)
 
 fig, ax = plt.subplots()
 ax.hist(np.log10(pop['d']*1e2), 100)
