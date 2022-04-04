@@ -10,6 +10,26 @@ from pprint import pprint
 import sorts
 import pyant
 
+import sys
+
+'''
+
+python projects/kosmos_sizes.py 
+python projects/kosmos_sizes.py trunc
+
+'''
+
+if len(sys.argv) > 1:
+    arg = sys.argv[1]
+else:
+    arg = ''
+
+max_diam_filter = 1e-2*10**(3.7)
+
+TRUNC_ANALYSIS = False
+if arg.lower().strip() == 'trunc':
+    TRUNC_ANALYSIS = True
+
 HERE = Path(__file__).parent.resolve()
 OUTPUT = HERE / 'output' / 'russian_asat'
 print(f'Using {OUTPUT} as output')
@@ -84,8 +104,14 @@ filter_limit = 0.015
 select = np.load(category_files[radar][ind])
 data_file = paths['data_paths'][radar][ind]
 date = dates[radar][ind]
-rcs_path = OUTPUT / f'{date.replace("-", ".")}_{radar}_rcs'
-rcs_plot_path = OUTPUT / f'{date.replace("-", ".")}_{radar}_rcs_plots'
+
+if TRUNC_ANALYSIS:
+    rcs_path = OUTPUT / f'{date.replace("-", ".")}_{radar}_rcs_trunc_gain'
+    rcs_plot_path = OUTPUT / f'{date.replace("-", ".")}_{radar}_rcs_trunc_gain_plots'
+else:
+    rcs_path = OUTPUT / f'{date.replace("-", ".")}_{radar}_rcs'
+    rcs_plot_path = OUTPUT / f'{date.replace("-", ".")}_{radar}_rcs_plots'
+
 rcs_plot_path.mkdir(exist_ok=True)
 
 
@@ -97,7 +123,10 @@ print(collected_res)
 with open(collected_res, 'rb') as fh:
     results = pickle.load(fh)
 
-keep_inds = results['match'] <= filter_limit
+keep_inds = np.logical_and.reduce([
+    results['match'] <= filter_limit,
+    results['estimated_diam'] <= max_diam_filter,
+])
 
 kosmos_cat = kosmos_select(select)
 correlated_cat = correlated_select(select)
@@ -300,13 +329,14 @@ axes[0, 1].hist(
     bins=size_bins, 
     color='b',
 )
-axes[1, 1].set_title('Difference (-under/+over)')
+axes[1, 1].set_title('Fraction [-lower/+higher estimate]')
 axes[1, 1].hist(
-    np.log10(results['estimated_diam'][keep_stats]*1e2) - np.log10(results['predicted_diam'][keep_stats]*1e2),
+    np.log10(results['estimated_diam'][keep_stats]/results['predicted_diam'][keep_stats]),
+    bins=int(np.sqrt(np.sum(keep_stats))),
     color='b',
 )
 for ax in axes[1, :]:
-    ax.set_xlabel('Diameter at peak SNR [log10(cm)]')
+    ax.set_xlabel('Diameter fraction [log10(estimated/predicted)]')
 for ax in axes[:, 0]:
     ax.set_ylabel('Frequency [1]')
 
@@ -386,7 +416,7 @@ axes[0].hist(
     bins=size_bins, 
     color='b',
 )
-axes[0].set_title('Total')
+axes[0].set_title('Background')
 axes[1].hist(
     np.log10(kosmos_diams*1e2),
     bins=size_bins, 
@@ -481,7 +511,7 @@ axes[0].bar(
     width=np.diff(size_bins),
     color='b',
 )
-axes[0].set_title('Other')
+axes[0].set_title('Background')
 axes[1].bar(
     bin_mids,
     kosmos_dist, 
@@ -610,6 +640,7 @@ ax.scatter(
 )
 
 ax.axvline(filter_limit, color='r')
+ax.axhline(np.log10(max_diam_filter*1e2), color='r')
 ax.set_xlabel('Distance function')
 ax.set_ylabel('Diameter at peak SNR [log10(cm)]')
 ax.set_title('Distance function versus estimated diameter')

@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from astropy.time import Time, TimeDelta
 
 import sorts
+import pyant
 from sorts.population import master_catalog, master_catalog_factor
 
 epoch = Time('2021-11-23 12:00:00', format='iso')
@@ -129,6 +130,7 @@ class ObservedScanning(
 
 radar = sorts.radars.eiscat_uhf
 radar.rx = radar.rx[:1]
+tx = radar.tx[0]
 
 scan = sorts.radar.scans.Beampark(
     azimuth=90.0, 
@@ -161,11 +163,91 @@ sim_data = np.load(sim_data_file)
 keep = sim_data['snr'] > snr_lim
 objs = sim_data['oid'][keep]
 
+keep_big = np.logical_and(keep, pop['d'][sim_data['oid']] > 1e-1)
+big_objs = sim_data['oid'][keep_big]
+
+k_vecs = np.empty((3, len(sim_data['kx'])), dtype=np.float64)
+k_vecs[0, :] = sim_data['kx']
+k_vecs[1, :] = sim_data['ky']
+k_vecs[2, :] = sim_data['kz']
+
+tx.beam.sph_point(
+    azimuth=90, 
+    elevation=75,
+)
+
+fig, ax = plt.subplots(figsize=(12, 8))
+pyant.plotting.gain_heatmap(tx.beam, min_elevation=85.0, ax=ax)
+ax.plot(
+    k_vecs[0, keep], 
+    k_vecs[1, keep], 
+    '.k', 
+)
+ax.set_title('Detected peak SNR location')
+ax.set_xlabel('kx [1]')
+ax.set_ylabel('ky [1]')
+fig.savefig(out_pth / 'observed_k_vecs.png')
+plt.close(fig)
+
+fig, ax = plt.subplots(figsize=(12, 8))
+ax2 = ax.twinx()
+
+zenith_ang = pyant.coordinates.vector_angle(tx.beam.pointing, k_vecs[:, keep], radians=False)
+
+beam0 = tx.beam.copy()
+
+beam0.sph_point(
+    azimuth=0, 
+    elevation=90,
+)
+theta = np.linspace(90, 85, num=1000)
+_kv = np.zeros((3, len(theta)))
+_kv[1, :] = theta
+_kv[2, :] = 1
+_kv = pyant.coordinates.sph_to_cart(_kv, radians=False)
+S = beam0.gain(_kv)
+
+p1, = ax2.plot(90 - theta, np.log10(S)*10.0, color='r')
+ax.hist(zenith_ang)
+
+ax2.yaxis.label.set_color(p1.get_color())
+ax2.tick_params(axis='y', colors=p1.get_color())
+ax.set_title('Detected peak SNR location')
+ax.set_xlabel('Off-axis angle [deg]')
+ax.set_ylabel('Frequency')
+ax2.set_ylabel('Gain [dB]')
+fig.savefig(out_pth / 'detected_offaxis_angles.png')
+plt.close(fig)
+
+
+fig, ax = plt.subplots(figsize=(12, 8))
+ax2 = ax.twinx()
+
+zenith_ang = pyant.coordinates.vector_angle(tx.beam.pointing, k_vecs[:, keep_big], radians=False)
+p1, = ax2.plot(90 - theta, np.log10(S)*10.0, color='r')
+ax.hist(zenith_ang)
+
+ax2.yaxis.label.set_color(p1.get_color())
+ax2.tick_params(axis='y', colors=p1.get_color())
+ax.set_title('Detected peak SNR location')
+ax.set_xlabel('Off-axis angle [deg]')
+ax.set_ylabel('Frequency')
+ax2.set_ylabel('Gain [dB]')
+fig.savefig(out_pth / 'detected_big_diam_offaxis_angles.png')
+plt.close(fig)
+
 fig, ax = plt.subplots()
-ax.hist(np.log10(pop['d'][objs]*1e2), 2*int(np.sqrt(len(objs))))
+_, bins, _ = ax.hist(np.log10(pop['d'][objs]*1e2), 2*int(np.sqrt(len(objs))))
 ax.set_xlabel('Diameter [log10(cm)]')
 ax.set_ylabel('Frequency')
 fig.savefig(out_pth / 'master_observed_size_dist.png')
+plt.close(fig)
+
+fig, ax = plt.subplots()
+ax.hist(np.log10(pop['d'][big_objs]*1e2), bins=bins)
+ax.set_xlabel('Diameter [log10(cm)]')
+ax.set_ylabel('Frequency')
+fig.savefig(out_pth / 'master_observed_big_diam_size_dist.png')
 plt.close(fig)
 
 fig, ax = plt.subplots()

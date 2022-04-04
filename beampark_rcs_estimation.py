@@ -47,6 +47,17 @@ mpirun -np 6 ./beampark_rcs_estimation.py estimate \
     ~/data/spade/beamparks/uhf/2021.11.23/leo_bpark_2.1u_NO@uhf_extended/ \
     ./projects/output/russian_asat/2021.11.23_uhf_rcs
 
+# followed by 
+cp -rv ./projects/output/russian_asat/2021.11.23_uhf_rcs{,_trunc_gain}
+
+mpirun -np 6 ./beampark_rcs_estimation.py estimate \
+    --matches-plotted 3 --min-gain 10.0 --min-snr 15.0 \
+    --inclination-samples 150 --anomaly-samples 100 \
+    --maximum-offaxis-angle 1.8 \
+    eiscat_uhf \
+    ~/data/spade/beamparks/uhf/2021.11.23/leo_bpark_2.1u_NO@uhf_extended/ \
+    ./projects/output/russian_asat/2021.11.23_uhf_rcs_trunc_gain
+
 ./beampark_rcs_estimation.py predict eiscat_uhf \
     projects/output/russian_asat/{\
     2021_11_23_spacetrack.tle,\
@@ -68,6 +79,12 @@ mpirun -np 6 ./beampark_rcs_estimation.py estimate \
     projects/output/russian_asat/2021_11_23_spacetrack.tle \
     ~/data/spade/beamparks/uhf/2021.11.23/leo_bpark_2.1u_NO@uhf_extended/ \
     ./projects/output/russian_asat/2021.11.23_uhf_rcs
+
+./beampark_rcs_estimation.py collect \
+    eiscat_uhf \
+    projects/output/russian_asat/2021_11_23_spacetrack.tle \
+    ~/data/spade/beamparks/uhf/2021.11.23/leo_bpark_2.1u_NO@uhf_extended/ \
+    ./projects/output/russian_asat/2021.11.23_uhf_rcs_trunc_gain
 
 '''
 
@@ -657,14 +674,24 @@ def main_estimate(args):
         pths = [None for x in range(samps)]
         gains = [None for x in range(samps)]
         low_gains = [None for x in range(samps)]
+        pths_off_angle = [None for x in range(samps)]
         for ind in range(samps):
             pth, diam, SNR_sim, G_pth = reses[ind]
+
+            pths_off_angle[ind] = pyant.coordinates.vector_angle(
+                radar.tx[0].beam.pointing, 
+                pth, 
+                radians=False,
+            )
 
             G_pth_db = 10*np.log10(G_pth)
             gains[ind] = G_pth_db
             low_gain_inds = G_pth_db < args.min_gain
-            diam[low_gain_inds] = np.nan
-            SNR_sim[low_gain_inds] = 0
+            high_offaxis_inds = pths_off_angle[ind] > args.maximum_offaxis_angle
+            rem_inds = np.logical_or(low_gain_inds, high_offaxis_inds)
+
+            diam[rem_inds] = np.nan
+            SNR_sim[rem_inds] = 0
 
             pths[ind] = pth
             diams[ind] = diam
@@ -679,13 +706,8 @@ def main_estimate(args):
         matches = [None for x in range(samps)]
         metas = [None for x in range(samps)]
         for ind in range(samps):
-            sample_off_angles = pyant.coordinates.vector_angle(
-                radar.tx[0].beam.pointing, 
-                pths[ind], 
-                radians=False,
-            )
             matches[ind], metas[ind] = matching_function(
-                data, SNR_sims[ind], sample_off_angles, args, 
+                data, SNR_sims[ind], pths_off_angle[ind], args, 
             )
 
         matches = np.array(matches)
@@ -736,11 +758,6 @@ def main_estimate(args):
         matches_prob[idx] *= -1
         matches_prob[idx] -= np.min(matches_prob[idx])
         matches_prob[idx] /= np.sum(matches_prob[idx])
-        
-        # zenith_prob = 5.0 - off_angles_lin
-        # zenith_prob[prob_remover] = 0
-        # zenith_prob[zenith_prob < 0] = 0
-        # zenith_prob /= np.sum(zenith_prob)
 
         kx_mat = kv[0, :].reshape(matches_mat.shape)
         ky_mat = kv[1, :].reshape(matches_mat.shape)
@@ -1559,6 +1576,13 @@ def build_estimate_parser(parser):
         metavar='LIMIT',
         type=float, 
         help='Percentile of matches at which to consider matches as probable',
+    )
+    parser.add_argument(
+        '--maximum-offaxis-angle',
+        default=90.0,
+        metavar='LIMIT',
+        type=float, 
+        help='Limit at which to truncate the gain model',
     )
     parser.add_argument(
         '--matches-plotted',
