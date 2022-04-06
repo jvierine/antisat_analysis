@@ -16,7 +16,10 @@ import sorts
 '''
 Example execution
 
-python multi_beampark_correlator.py ~/data/spade/beamparks/uhf/2021.11.23/space-track.tles ~/data/spade/beamparks/{uhf,esr}/2021.11.23/correlation.h5
+python multi_beampark_correlator.py \
+    ~/data/spade/beamparks/uhf/2021.11.23/space-track.tles \
+    -o ~/data/spade/beamparks/uhf/2021.11.23/dual_correlations.npy \
+    ~/data/spade/beamparks/{uhf,esr}/2021.11.23/correlation.h5
 '''
 
 
@@ -32,6 +35,8 @@ def main(input_args=None):
     parser = argparse.ArgumentParser(description='Analyse beampark correlation for a beampark')
     parser.add_argument('catalog', type=str, help='Catalog to which data was correlated')
     parser.add_argument('inputs', type=str, nargs='+', help='Input correlation data files')
+    parser.add_argument('-o', '--output', type=str, default='', help='Output OID save location')
+    parser.add_argument('--target-epoch', type=str, default=None, help='When filtering unique TLEs use this target epoch [ISO]')
 
     # This assumes correlation was done using the exact same TLE population so that
     #  object indecies match up in each correlation file
@@ -78,7 +83,7 @@ def main(input_args=None):
         }
 
         for oid in np.unique(match_data[ind]['match']):
-            indecies = np.where(match_data[ind]['match'] == oid)
+            indecies = np.where(match_data[ind]['match'] == oid)[0]
 
             if oid not in objects:
                 objects[oid] = {
@@ -98,10 +103,18 @@ def main(input_args=None):
 
     possible_multi = 0
     multi_match_oids = []
+    multi_match_mids = []
     for oid, bp in objects.items():
         # skip all objects only seen in one beampark
         if bp['num'] < 2:
             continue
+
+        mids = [np.nan]*len(input_pths)
+        for bpid, mid in zip(bp['beampark'], bp['measurement_id']):
+            # Assume only once in each beampark, this will have to be updated 
+            # if the same object is detected twice in one experiment
+            mids[bpid] = mid[0]
+        multi_match_mids.append(mids)
 
         multi_match_oids.append(oid)
 
@@ -122,26 +135,39 @@ def main(input_args=None):
 
         possible_multi += 1
 
+    multi_match_mids = np.array(multi_match_mids)
+
     print(f'Possible multi-beampark observed objects: {possible_multi}')
 
     print('Loading TLE population')
     pop = sorts.population.tle_catalog(tle_pth, cartesian=False)
     pop.out_frame = 'ITRS'
+
+    if args.target_epoch is not None:
+        args.target_epoch = Time(args.target_epoch, format='iso', scale='utc').mjd
+    pop.unique(target_epoch=args.target_epoch)
+
     print(f'Population size: {len(pop)}')
 
     get_fields = ['oid', 'mjd0', 'line1', 'line2']
 
-    _dtype = [('cid', np.int64)]
+    _dtype = [(f'mid{ind}', np.int64) for ind in range(len(input_pths))]
+    _dtype += [('cid', np.int64)]
     for key in get_fields:
         _dtype += [(key, pop.dtypes[pop.fields.index(key)])]
 
     _data = pop.data[multi_match_oids][get_fields]
     _data_m = np.empty((len(_data),), dtype=_dtype)
     _data_m['cid'] = multi_match_oids
+    for ind in range(len(input_pths)):
+        _data_m[f'mid{ind}'] = multi_match_mids[:, ind]
     for key in get_fields:
         _data_m[key] = _data[key]
 
-    print(tabulate(_data_m, headers=['OID', 'NORAD-ID', 'mjd0', 'line1', 'line2']))
+    if len(args.output) > 0:
+        np.save(args.output, _data_m)
+
+    print(tabulate(_data_m, headers=[f'MID-{ind}' for ind in range(len(input_pths))] + ['OID', 'NORAD-ID', 'mjd0', 'line1', 'line2']))
 
 
 if __name__ == '__main__':
