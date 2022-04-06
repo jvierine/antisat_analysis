@@ -24,7 +24,7 @@ if len(sys.argv) > 1:
 else:
     arg = ''
 
-max_diam_filter = 1e-2*10**(3.7)
+min_gain_filter = 20.0  # dB
 
 TRUNC_ANALYSIS = False
 if arg.lower().strip() == 'trunc':
@@ -125,8 +125,9 @@ with open(collected_res, 'rb') as fh:
 
 keep_inds = np.logical_and.reduce([
     results['match'] <= filter_limit,
-    results['estimated_diam'] <= max_diam_filter,
+    results['estimated_gain'] >= min_gain_filter,
 ])
+
 
 kosmos_cat = kosmos_select(select)
 correlated_cat = correlated_select(select)
@@ -625,7 +626,8 @@ fig.savefig(rcs_plot_path / 'correlated_diam_mean_dist.png')
 plt.close(fig)
 
 
-fig, ax = plt.subplots(figsize=(12, 8))
+fig, axes = plt.subplots(1, 2, figsize=(12, 8), sharex='all')
+ax = axes[0]
 ax.scatter(
     results['match'][keep_inds],
     np.log10(results['estimated_diam'][keep_inds]*1e2),
@@ -640,10 +642,27 @@ ax.scatter(
 )
 
 ax.axvline(filter_limit, color='r')
-ax.axhline(np.log10(max_diam_filter*1e2), color='r')
 ax.set_xlabel('Distance function')
 ax.set_ylabel('Diameter at peak SNR [log10(cm)]')
 ax.set_title('Distance function versus estimated diameter')
 ax.legend()
+
+ax = axes[1]
+ax.scatter(
+    results['match'][keep_inds],
+    results['estimated_gain'][keep_inds],
+    color='b',
+)
+ax.scatter(
+    results['match'][np.logical_not(keep_inds)],
+    results['estimated_gain'][np.logical_not(keep_inds)],
+    color='r',
+)
+
+ax.axvline(filter_limit, color='r')
+ax.axhline(min_gain_filter, color='r')
+ax.set_xlabel('Distance function')
+ax.set_ylabel('Gain at peak SNR [dB]')
+
 fig.savefig(rcs_plot_path / 'dist_vs_diam.png')
 plt.close(fig)
