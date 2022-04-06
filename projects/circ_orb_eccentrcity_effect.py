@@ -34,7 +34,7 @@ sph_point = np.array((90., 75., 1.))
 epoch = Time('J2000')
 
 r_obj = 500e3
-delta_v_std = 10000.0  # m/s
+delta_v_std = 0.1e3  # m/s
 np.random.seed(87243)
 
 
@@ -131,13 +131,18 @@ r_teme = sorts.frames.convert(
 )
 r_teme = r_teme[:3]
 
-orb_0 = theta_orbit(r_teme, epoch, np.array([90.0]))
+base_orb = theta_orbit(r_teme, epoch, np.array([90.0]))
 
-orb_0.add(orb_samp - 1)
-orb_0.kepler = np.tile(orb_0.kepler[:, 0].reshape(6, 1), (1, orb_samp))
-orb_0.calculate_cartesian()
-orb_0._cart[:3, :] = orb_0._cart[:3, :] + np.random.randn(3, orb_samp)*delta_v_std
-orb_0.calculate_kepler()
+orb_0 = pyorb.Orbit(
+    M0=pyorb.M_earth, m=0, 
+    num=orb_samp, epoch=epoch, 
+    degrees=True,
+    direct_update=True,
+    auto_update=True,
+)
+
+orb_0.kepler = np.tile(base_orb.kepler, (1, orb_samp))
+orb_0.v = orb_0.v + np.random.randn(3, orb_samp)*delta_v_std
 
 states = sorts.frames.convert(
     epoch, 
@@ -207,8 +212,8 @@ true_col = 'r'
 
 fig, axes = plt.subplots(2, 4, sharey='all', sharex='col', figsize=(12, 7))
 
-axes[0, 0].hist(kepler_elems[0, :]/sorts.constants.R_earth, label='Estimated')
-axes[0, 1].axis('off')
+axes[0, 0].axvline(kepler_elems[0, 0]/sorts.constants.R_earth, label='Estimated')
+axes[0, 1].axvline(kepler_elems[1, 0], label='Estimated')
 axes[0, 2].hist(kepler_elems[2, :])
 axes[0, 3].hist(kepler_elems[4, :])
 axes[0, 0].legend()
