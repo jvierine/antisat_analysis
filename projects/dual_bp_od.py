@@ -4,6 +4,7 @@ import pickle
 from pathlib import Path
 import matplotlib.pyplot as plt
 import h5py
+from pprint import pprint
 
 from lamberthub import izzo2015
 
@@ -33,6 +34,62 @@ def solve_lambert(pos1, pos2, dt):
         radians=False,
     )
     orb.cartesian = np.hstack([pos1, pos2])
+    return orb
+
+
+def theta_orbit(r_teme, epoch, theta):
+
+    orb = pyorb.Orbit(
+        M0=pyorb.M_earth, m=0, 
+        num=1, epoch=epoch, 
+        degrees=True,
+        direct_update=False,
+        auto_update=True,
+    )
+    orb.a = np.linalg.norm(r_teme)
+    orb.e = 0
+    orb.omega = 0
+
+    # angle of the velocity vector in the perpendicular plane of the position
+    # is the free parameter
+
+    # find the velocity of a circular orbit
+    orb.i = 0
+    orb.Omega = 0
+    orb.anom = 0
+    v_norm = orb.speed[0]
+
+    x_hat = np.array([1, 0, 0], dtype=np.float64)  # Z-axis unit vector
+    z_hat = np.array([0, 0, 1], dtype=np.float64)  # Z-axis unit vector
+    # formula for creating the velocity vectors
+    b3 = r_teme/np.linalg.norm(r_teme)  # r unit vector
+    b3 = b3.flatten()
+
+    b1 = np.cross(b3, z_hat)  # Az unit vector
+    if np.linalg.norm(b1) < 1e-12:
+        b1 = np.cross(b3, x_hat)  # Az unit vector
+    b1 = b1/np.linalg.norm(b1)
+
+    b2 = np.cross(b3, b1)  # El unit vector
+    v1 = np.cos(theta)
+    v2 = np.sin(theta)
+    inp_vec = v1[None, :]*b1[:, None] + v2[None, :]*b2[:, None]
+    v_temes = v_norm*inp_vec
+
+    # fig = plt.figure()
+    # ax = fig.add_subplot(111, projection='3d')
+    # ax.plot(v_temes[0, :], v_temes[1, :], v_temes[2, :], '.')
+    # plt.show()
+
+    orb.allocate(len(theta))
+    orb.update(
+        x = r_teme[0],
+        y = r_teme[1],
+        z = r_teme[2],
+        vx = v_temes[0, :],
+        vy = v_temes[1, :],
+        vz = v_temes[2, :],
+    )
     return orb
 
 
@@ -139,6 +196,10 @@ prop = sorts.propagator.SGP4(
     ),
 )
 
+r_err = 5.0e2
+v_err = 1.0e2
+th_samples = 1000
+
 data_ids = {'uhf': 0, 'esr': 1}
 dual_ind = 1
 radar_lst = ['uhf', 'esr']
@@ -220,11 +281,44 @@ print('dt: ', dt)
 
 if dt < 0:
     orb = solve_lambert(pos_vecs[1], pos_vecs[0], -dt)
+    date0 = odlab.times.mjd2npdt(meas_times[1].mjd)
 else:
     orb = solve_lambert(pos_vecs[0], pos_vecs[1], dt)
+    date0 = odlab.times.mjd2npdt(meas_times[0].mjd)
 
 print('inital lambert guess: ')
 print(orb)
+
+if orb.e > 1:
+    print('lambert solver fails to find bound orbit, reverting to circular optimization')
+    theta = np.linspace(0, np.pi*2, th_samples)
+    sample_orbs_0 = theta_orbit(pos_vecs[0], meas_times[0], theta)
+    sample_orbs_0.calculate_kepler()
+    sample_orbs = sample_orbs_0.copy()
+    sample_orbs.propagate(-dt)
+
+    sample_itrs = sorts.frames.convert(
+        meas_times[1], 
+        sample_orbs.cartesian, 
+        in_frame='TEME', 
+        out_frame='ITRS',
+    )
+
+    sample_r, sample_v = get_range_and_range_rate(txs[1], sample_itrs)
+
+    metric = ((sample_r - meas_r[1])/r_err)**2 + ((sample_v - meas_v[1])/v_err)**2
+    best_th = np.argmin(metric)
+
+    orb = sample_orbs_0[best_th]
+
+    print(f'circular opt metric: \n\
+        [dr={sample_r[best_th] - meas_r[1]} m] \n\
+        [dv={sample_v[best_th] - meas_v[1]} m/s] \n\
+        [metric={metric[best_th]}]')
+    print('inital circular guess: ')
+    print(orb)
+    date0 = odlab.times.mjd2npdt(meas_times[0].mjd)
+    
 
 odlab.profiler.enable('odlab')
 
@@ -234,24 +328,50 @@ odlab.profiler.enable('odlab')
 #         out_frame='ITRS',
 #     )
 # )
-od_prop = sorts.propagator.SGP4(
+od_prop_sgp4 = sorts.propagator.SGP4(
     settings=dict(
         in_frame='TEME',
         out_frame='ITRS',
     )
 )
 
+orekit_data = OUTPUT / 'orekit-data-master.zip'
+if not orekit_data.is_file():
+    sorts.propagator.Orekit.download_quickstart_data(
+        orekit_data, verbose=True
+    )
+
+settings = dict(
+    in_frame='TEME',
+    out_frame='ITRS',
+    solar_activity_strength='WEAK',
+    integrator='DormandPrince853',
+    min_step=0.001,
+    max_step=240.0,
+    position_tolerance=20.0,
+    earth_gravity='HolmesFeatherstone',
+    gravity_order=(10, 10),
+    solarsystem_perturbers=['Moon', 'Sun'],
+    drag_force=False,
+    atmosphere='DTM2000',
+    radiation_pressure=False,
+    solar_activity='Marshall',
+    constants_source='WGS84',
+)
+od_prop = sorts.propagator.Orekit(
+    orekit_data=orekit_data,
+    settings=settings,
+)
+
 source_data = []
 
-r_err = 5.0e2
-v_err = 1.0e2
 dates = [odlab.times.mjd2npdt(_t.mjd) for _t in meas_times]
 
 for ind, tx in enumerate(txs):
     radar_data = np.empty((1,), dtype=odlab.sources.RadarTracklet.dtype)
     radar_data['date'][0] = dates[ind]
     radar_data['r'][0] = meas_r[ind]
-    radar_data['v'][0] = meas_r[ind]
+    radar_data['v'][0] = meas_v[ind]
     radar_data['r_sd'][0] = r_err
     radar_data['v_sd'][0] = v_err
 
@@ -264,38 +384,42 @@ for ind, tx in enumerate(txs):
         'index': 1,
     })
 
+pprint(source_data)
 paths = odlab.SourcePath.from_list(source_data, 'ram')
 
 sources = odlab.SourceCollection(paths = paths)
 sources.details()
 
-mean_prior, B, tle_epoch = od_prop.get_mean_elements(
+mean_prior, B, tle_epoch = od_prop_sgp4.get_mean_elements(
     dual_corrs['line1'][dual_ind], 
     dual_corrs['line2'][dual_ind], 
     radians=False,
 )
 
 
-# state_variables = ['x', 'y', 'z', 'vx', 'vy', 'vz']
-state_variables = ['a', 'e', 'inc', 'apo', 'raan', 'mu0']
+state_variables = ['x', 'y', 'z', 'vx', 'vy', 'vz']
+# state_variables = ['a', 'e', 'inc', 'apo', 'raan', 'mu0']
 variables = state_variables
 dtype = [(name, 'float64') for name in variables]
 state0_named = np.empty((1,), dtype=dtype)
+tle0_named = np.empty((1,), dtype=dtype)
 for ind, name in enumerate(variables):
-    # state0_named[name] = orb.cartesian[ind, 0]
+    # state0_named[name] = orb.kepler[ind, 0]
+    state0_named[name] = orb.cartesian[ind, 0]
     # state0_named[name] = true_prior[ind]
-    state0_named[name] = mean_prior[ind]
+    # state0_named[name] = mean_prior[ind]
+    tle0_named[name] = mean_prior[ind]
 
 
 input_data_state = {
     'sources': sources,
     'Models': [odlab.RadarPair]*len(sources),
-    # 'date0': np.min(dates),
-    'date0': odlab.times.mjd2npdt(tle_epoch.mjd),
+    'date0': date0,
+    # 'date0': odlab.times.mjd2npdt(tle_epoch.mjd),
     'params': dict(
-        B = B,
-        M0 = pyorb.M_earth,
-        SGP4_mean_elements = True,
+        # B = B,
+        # M0 = pyorb.M_earth,
+        # SGP4_mean_elements = True,
     ),
 }
 
@@ -311,11 +435,28 @@ post = odlab.OptimizeLeastSquares(
         maxiter = 10000,
         disp = False,
         xatol = 1e-3,
+        # bounds = [
+        #     (None, None),
+        #     (0, 1),
+        #     (None, None),
+        #     (None, None),
+        #     (None, None),
+        #     (None, None),
+        # ]
     ),
 )
 
 
 post.run()
+
+print('==== TLE variables ====')
+for key in state_variables:
+    print(f'{key}: {tle0_named[key]}')
+
+print('==== Start variables ====')
+for key in state_variables:
+    print(f'{key}: {state0_named[key]}')
+
 
 print(post.results)
 
