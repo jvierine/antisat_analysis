@@ -229,6 +229,9 @@ prop.set(out_frame='TEME')
 true_prior = prop.propagate(
     np.min(tv), [dual_corrs['line1'][dual_ind], dual_corrs['line2'][dual_ind]],
 )
+tle_state = prop.propagate(
+    tv[0], [dual_corrs['line1'][dual_ind], dual_corrs['line2'][dual_ind]],
+)
 prop.set(out_frame='ITRS')
 
 sim_r = []
@@ -335,33 +338,39 @@ od_prop_sgp4 = sorts.propagator.SGP4(
     )
 )
 
-orekit_data = OUTPUT / 'orekit-data-master.zip'
-if not orekit_data.is_file():
-    sorts.propagator.Orekit.download_quickstart_data(
-        orekit_data, verbose=True
+od_prop = sorts.propagator.Kepler(
+    settings=dict(
+        in_frame='TEME',
+        out_frame='ITRS',
     )
+)
 
-settings = dict(
-    in_frame='TEME',
-    out_frame='ITRS',
-    solar_activity_strength='WEAK',
-    integrator='DormandPrince853',
-    min_step=0.001,
-    max_step=240.0,
-    position_tolerance=20.0,
-    earth_gravity='HolmesFeatherstone',
-    gravity_order=(10, 10),
-    solarsystem_perturbers=['Moon', 'Sun'],
-    drag_force=False,
-    atmosphere='DTM2000',
-    radiation_pressure=False,
-    solar_activity='Marshall',
-    constants_source='WGS84',
-)
-od_prop = sorts.propagator.Orekit(
-    orekit_data=orekit_data,
-    settings=settings,
-)
+# orekit_data = OUTPUT / 'orekit-data-master.zip'
+# if not orekit_data.is_file():
+#     sorts.propagator.Orekit.download_quickstart_data(
+#         orekit_data, verbose=True
+#     )
+# settings = dict(
+#     in_frame='TEME',
+#     out_frame='ITRS',
+#     solar_activity_strength='WEAK',
+#     integrator='DormandPrince853',
+#     min_step=0.001,
+#     max_step=240.0,
+#     position_tolerance=20.0,
+#     earth_gravity='HolmesFeatherstone',
+#     gravity_order=(10, 10),
+#     solarsystem_perturbers=['Moon', 'Sun'],
+#     drag_force=False,
+#     atmosphere='DTM2000',
+#     radiation_pressure=False,
+#     solar_activity='Marshall',
+#     constants_source='WGS84',
+# )
+# od_prop = sorts.propagator.Orekit(
+#     orekit_data=orekit_data,
+#     settings=settings,
+# )
 
 source_data = []
 
@@ -398,16 +407,20 @@ mean_prior, B, tle_epoch = od_prop_sgp4.get_mean_elements(
 
 
 state_variables = ['x', 'y', 'z', 'vx', 'vy', 'vz']
-# state_variables = ['a', 'e', 'inc', 'apo', 'raan', 'mu0']
+kep_state_variables = ['a', 'e', 'inc', 'apo', 'raan', 'mu0']
 variables = state_variables
 dtype = [(name, 'float64') for name in variables]
+kep_dtype = [(name, 'float64') for name in kep_state_variables]
 state0_named = np.empty((1,), dtype=dtype)
-tle0_named = np.empty((1,), dtype=dtype)
+state1_named = np.empty((1,), dtype=kep_dtype)
+tle0_named = np.empty((1,), dtype=kep_dtype)
 for ind, name in enumerate(variables):
     # state0_named[name] = orb.kepler[ind, 0]
     state0_named[name] = orb.cartesian[ind, 0]
     # state0_named[name] = true_prior[ind]
     # state0_named[name] = mean_prior[ind]
+
+for ind, name in enumerate(kep_state_variables):
     tle0_named[name] = mean_prior[ind]
 
 
@@ -418,12 +431,18 @@ input_data_state = {
     # 'date0': odlab.times.mjd2npdt(tle_epoch.mjd),
     'params': dict(
         # B = B,
-        # M0 = pyorb.M_earth,
-        # SGP4_mean_elements = True,
+        M0 = pyorb.M_earth,
+        SGP4_mean_elements = True,
     ),
 }
 
-post = odlab.OptimizeLeastSquares(
+
+print('==== Start variables ====')
+for key in state_variables:
+    print(f'{key}: {state0_named[key]}')
+
+
+post_kep = odlab.OptimizeLeastSquares(
     data = input_data_state,
     variables = variables,
     state_variables = state_variables,
@@ -447,25 +466,69 @@ post = odlab.OptimizeLeastSquares(
 )
 
 
+post_kep.run()
+
+print('==== TLE State ====')
+for key, val in zip(state_variables, tle_state):
+    print(f'{key}: {val}')
+
+
+print(' POST KEP \n')
+print(post_kep.results)
+
+exit()
+
+post_kep_orb = pyorb.Orbit(
+    M0=pyorb.M_earth, 
+    m=0, 
+    num=1, 
+    radians=False,
+    cartesian = np.array([post_kep.results.MAP[key][0] for key in state_variables]).reshape(6, 1),
+)
+for ind, key in enumerate(kep_state_variables):
+    state1_named[key][0] = post_kep_orb.kepler[ind, 0]
+
+post = odlab.OptimizeLeastSquares(
+    data = input_data_state,
+    variables = kep_state_variables,
+    state_variables = kep_state_variables,
+    start = state1_named,
+    prior = None,
+    propagator = od_prop_sgp4,
+    method = 'Nelder-Mead',
+    options = dict(
+        maxiter = 10000,
+        disp = False,
+        xatol = 1e-3,
+        bounds = [
+            (None, None),
+            (0, 1),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+        ]
+    ),
+)
 post.run()
 
+
 print('==== TLE variables ====')
-for key in state_variables:
+for key in kep_state_variables:
     print(f'{key}: {tle0_named[key]}')
 
-print('==== Start variables ====')
-for key in state_variables:
-    print(f'{key}: {state0_named[key]}')
+print('==== Start 1 variables ====')
+for key in kep_state_variables:
+    print(f'{key}: {state1_named[key]}')
 
 
 print(post.results)
 
-# res_cart = np.array([post.results.MAP[key][0] for key in state_variables])
-res_mean = np.array([post.results.MAP[key][0] for key in state_variables])
+res_mean = np.array([post.results.MAP[key][0] for key in kep_state_variables])
 
 od_prop.set(out_frame='TEME')
-_state0 = od_prop.propagate(
-    0, res_mean, epoch=tle_epoch, B=B, SGP4_mean_elements=True,
+_state0 = od_prop_sgp4.propagate(
+    0, res_mean, epoch=tle_epoch, SGP4_mean_elements=True,
 )
 
 result_orb = pyorb.Orbit(
@@ -478,9 +541,9 @@ result_orb = pyorb.Orbit(
 )
 print(result_orb)
 
-deltas = [0.1]*3 + [0.05]*3
-Sigma_orb = post.linear_MAP_covariance(post.results.MAP, deltas)
-print('Linearized MAP covariance:')
-print(Sigma_orb)
+# deltas = [0.1]*3 + [0.05]*3
+# Sigma_orb = post.linear_MAP_covariance(post.results.MAP, deltas)
+# print('Linearized MAP covariance:')
+# print(Sigma_orb)
 
 print(odlab.profiler)
