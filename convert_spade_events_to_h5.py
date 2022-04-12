@@ -89,7 +89,7 @@ def get_spade_data(files, verbose=False):
     return data
 
 
-def read_spade(target_dir, output_h5, SNR_lim, verbose=False):
+def read_spade(target_dir, output_h5, SNR_lim=MIN_SNR, verbose=False):
 
     files = list(target_dir.glob('**/*.txt'))
     files.sort()
