@@ -51,6 +51,14 @@ Example execution:
     ./projects/output/russian_asat/2021.11.23_uhf_rcs_trunc_gain \
     --event uhf_20211123_120429_800000
 
+./beampark_rcs_estimation.py estimate \
+    --matches-plotted 3 --min-gain 10.0 --min-snr 15.0 \
+    --inclination-samples 150 --anomaly-samples 100 \
+    eiscat_uhf \
+    ~/data/spade/beamparks/uhf/2021.11.23/leo_bpark_2.1u_NO@uhf_extended/ \
+    ./projects/output/russian_asat/2021.11.23_uhf_rcs \
+    --event uhf_20211123_120429_800000
+
 ./beampark_rcs_estimation.py predict eiscat_uhf \
     projects/output/russian_asat/{\
     2021_11_23_spacetrack.tle,\
@@ -89,7 +97,19 @@ mpirun -np 6 ./beampark_rcs_estimation.py estimate \
     2021.11.23_uhf_correlation.pickle,\
     2021.11.23_uhf_correlation_plots/eiscat_uhf_selected_correlations.npy} \
     ~/data/spade/beamparks/uhf/2021.11.23/leo_bpark_2.1u_NO@uhf_extended/ \
-    projects/output/russian_asat/2021.11.23_uhf_rcs
+    projects/output/russian_asat/2021.11.23_uhf_rcs \
+    --min-gain 10.0 --min-snr 15.0
+
+./beampark_rcs_estimation.py predict eiscat_uhf \
+    projects/output/russian_asat/{\
+    2021_11_23_spacetrack.tle,\
+    uhf/2021.11.23.h5,\
+    2021.11.23_uhf_correlation.pickle,\
+    2021.11.23_uhf_correlation_plots/eiscat_uhf_selected_correlations.npy} \
+    ~/data/spade/beamparks/uhf/2021.11.23/leo_bpark_2.1u_NO@uhf_extended/ \
+    projects/output/russian_asat/2021.11.23_uhf_rcs_trunc_gain \
+    --min-gain 10.0 --min-snr 15.0
+
 
 ./beampark_rcs_estimation.py discos -k discos \
     projects/output/russian_asat/{\
@@ -125,9 +145,7 @@ def offaxis_weighting(angles):
     return w
 
 
-def snr_cut_weighting(sn, off_angles, idx_y, SNR_sim, not_used, snrdb_lim_rel):
-
-    snr_cut_weight = offaxis_weighting(off_angles[not_used])
+def snr_cut_weighting(off_weight, idx_y, SNR_sim, not_used, snrdb_lim_rel):
 
     if not np.any(not_used):
         snr_cut_matching = 0
@@ -141,15 +159,8 @@ def snr_cut_weighting(sn, off_angles, idx_y, SNR_sim, not_used, snrdb_lim_rel):
             sns_lim = sns_max - snrdb_lim_rel
             too_high = sns_not > sns_lim
 
-            snr_cut_matching = sns_not[too_high] - sns_lim
-            snr_diff = snr_cut_matching*snr_cut_weight[idx_n][too_high]
-
-            x = np.arange(len(SNR_sim))
-            plt.plot(x[not_used][idx_n][too_high], sns_not[too_high] - sns_lim, 'or')
-            plt.plot(x, np.log10(SNR_sim/np.max(SNR_sim))*10, '-b')
-            plt.plot(x[np.logical_not(not_used)], np.log10(sn/np.max(sn))*10, '-g')
-            plt.plot(x[not_used], np.log10(SNR_sim[not_used]/np.max(SNR_sim))*10, 'ob')
-            plt.show()
+            snr_cut_matching = (sns_not[too_high] - sns_lim)/sns_max
+            snr_diff = snr_cut_matching*off_weight[not_used][idx_n][too_high]
             
             snr_cut_matching = np.sum(snr_diff**2)
         else:
@@ -166,6 +177,8 @@ def matching_function(data, SNR_sim, off_angles, args):
     use_data = sndb > args.min_snr
     max_sndb_m = np.log10(np.max(data['SNR'].values))*10
     snrdb_lim_rel = max_sndb_m - args.min_snr
+
+    off_weight = offaxis_weighting(off_angles)
 
     sn = data['SNR'].values[use_data]
     xsn = np.full(sn.shape, np.nan, dtype=sn.dtype)
@@ -186,19 +199,17 @@ def matching_function(data, SNR_sim, off_angles, args):
     tot = np.sum(idx)
     if tot > 1:
         # each missed data point counts for the SNR of the measurement in size
-        missed_weight = offaxis_weighting(off_angles[use_data][not_idx])
-        missed_points = np.sum((xsn[not_idx]*missed_weight)**2)
+        missed_points = np.sum((xsn[not_idx]*off_weight[use_data][not_idx])**2)
 
         # then calculate the match (distance now)
-        weight = offaxis_weighting(off_angles[use_data][idx])
-        match = np.sum(((xsn[idx] - ysn[idx])*weight)**2) + missed_points
+        match = np.sum(((xsn[idx] - ysn[idx])*off_weight[use_data][idx])**2) + missed_points
     else:
         missed_points = np.nan
         match = np.nan
 
     not_used = np.logical_not(use_data)
     snr_cut_matching = snr_cut_weighting(
-        sn, off_angles, idx_y, SNR_sim, not_used, snrdb_lim_rel
+        off_weight, idx_y, SNR_sim, not_used, snrdb_lim_rel
     )
 
     match += snr_cut_matching
@@ -396,9 +407,10 @@ def plot_match(
 
     max_sn = np.argmax(sn_m)
     d_peak = diams[max_sn]*1e2
-    logd_peak = np.log10(d_peak)
-    axes[0, 0].set_ylim(d_peak*(1 - interval), d_peak*(1 + interval))
-    axes[0, 1].set_ylim(logd_peak*(1 - interval), logd_peak*(1 + interval))
+    if not (np.isnan(d_peak) or np.isinf(d_peak)):
+        logd_peak = np.log10(d_peak)
+        axes[0, 0].set_ylim(d_peak*(1 - interval), d_peak*(1 + interval))
+        axes[0, 1].set_ylim(logd_peak*(1 - interval), logd_peak*(1 + interval))
 
     axes[1, 0].set_xlabel('Time [s]')
 
@@ -928,26 +940,40 @@ def main_estimate(args):
         plt.close(fig)
 
         peak_diams_mat = 1e2*diams_at_peak.reshape(matches_mat.shape)
-        peak_small_lim = np.percentile(np.log10(matches[np.logical_not(np.isnan(matches))]).flatten(), 1.0)
+        peak_small_lim = np.percentile(np.log10(matches[np.logical_not(np.isnan(matches))]).flatten(), 0.5)
         peak_diams_mat[np.log10(matches_mat) > peak_small_lim] = np.nan
-        fig, ax = plt.subplots(figsize=(12, 8))
-        pmesh = ax.pcolormesh(
+
+        fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True, sharey=True)
+        pmesh = axes[0].pcolormesh(
             incs_mat, 
             nus_mat, 
             peak_diams_mat,
         )
-        ax.set_xlim(
-            np.min(incs_mat[np.logical_not(np.isnan(peak_diams_mat))]),
-            np.max(incs_mat[np.logical_not(np.isnan(peak_diams_mat))]),
-        )
-        ax.set_ylim(
-            np.min(nus_mat[np.logical_not(np.isnan(peak_diams_mat))]),
-            np.max(nus_mat[np.logical_not(np.isnan(peak_diams_mat))]),
-        )
-        cbar = fig.colorbar(pmesh, ax=ax)
+        if not np.all(np.isnan(peak_diams_mat)):
+            axes[0].set_xlim(
+                np.min(incs_mat[np.logical_not(np.isnan(peak_diams_mat))]),
+                np.max(incs_mat[np.logical_not(np.isnan(peak_diams_mat))]),
+            )
+            axes[0].set_ylim(
+                np.min(nus_mat[np.logical_not(np.isnan(peak_diams_mat))]),
+                np.max(nus_mat[np.logical_not(np.isnan(peak_diams_mat))]),
+            )
+        cbar = fig.colorbar(pmesh, ax=axes[0])
         cbar.set_label('Diameter at peak SNR [cm]')
-        ax.set_xlabel('Inclination perturbation [deg]')
-        ax.set_ylabel('Anomaly perturbation [deg]')
+        axes[0].set_ylabel('Anomaly perturbation [deg]')
+
+        matches_mat_tmp = matches_mat.copy()
+        matches_mat_tmp[np.log10(matches_mat) > peak_small_lim] = np.nan
+        pmesh = axes[1].pcolormesh(
+            incs_mat, 
+            nus_mat, 
+            np.log10(matches_mat_tmp),
+        )
+        cbar = fig.colorbar(pmesh, ax=axes[1])
+        cbar.set_label('Distance function [log10(1)]')
+        axes[1].set_xlabel('Inclination perturbation [deg]')
+        axes[1].set_ylabel('Anomaly perturbation [deg]')
+
         fig.savefig(results_folder / 'filt_diam_peak_heat.png')
         plt.close(fig)
 
@@ -1312,7 +1338,7 @@ def main_predict(args):
         SNR_sim, G_pth, diam, low_gain_inds, ecef_r, pth = pdatas[best_match]
         print(f't-jitter={t_jitter[best_match]}, match={matches[best_match]}')
 
-        fig, axes = plt.subplots(2, 2)
+        fig, axes = plt.subplots(2, 2, figsize=(12, 8))
         axes[0, 0].plot(t_jitter, matches)
         axes[0, 0].plot(t_jitter[best_match], matches[best_match], 'or')
 
@@ -1320,7 +1346,17 @@ def main_predict(args):
         axes[0, 1].plot(t_jitter, [x[1] for x in pmetas])
         axes[1, 1].plot(t_vec, 10*np.log10(SNR_sim/np.max(SNR_sim)))
         axes[1, 1].plot(t_vec, 10*np.log10(data['SNR'].values/np.max(data['SNR'].values)))
-        plt.show()
+        axes[1, 1].set_xlabel('Time [s]')
+        axes[1, 1].set_ylabel('SNR [dB]')
+        axes[1, 0].set_xlabel('Jitter [s]')
+        axes[1, 0].set_ylabel('Cut weight [1]')
+        axes[0, 1].set_xlabel('Jitter [s]')
+        axes[0, 1].set_ylabel('Miss weight [1]')
+        axes[0, 0].set_xlabel('Jitter [s]')
+        axes[1, 0].set_ylabel('Distance [1]')
+        fig.suptitle('Jitter search using matching function')
+        fig.savefig(results_folder / 'correlated_jitter_search.png')
+        plt.close(fig)
 
         fig, ax = plt.subplots(figsize=(12, 8))
         ax.plot(data['t'], np.linalg.norm(ecef_r, axis=0))
@@ -1346,9 +1382,10 @@ def main_predict(args):
 
         interval = 0.2
         d_peak = diam[peak_snr_id]*1e2
-        logd_peak = np.log10(d_peak)
-        axes[0, 0].set_ylim(d_peak*(1 - interval), d_peak*(1 + interval))
-        axes[0, 1].set_ylim(logd_peak*(1 - interval), logd_peak*(1 + interval))
+        if not (np.isnan(d_peak) or np.isinf(d_peak)):
+            logd_peak = np.log10(d_peak)
+            axes[0, 0].set_ylim(d_peak*(1 - interval), d_peak*(1 + interval))
+            axes[0, 1].set_ylim(logd_peak*(1 - interval), logd_peak*(1 + interval))
 
         axes[1, 0].plot(data['t'], SNR_sim/np.max(SNR_sim), label='Estimated')
         axes[1, 0].plot(
