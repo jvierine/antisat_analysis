@@ -24,7 +24,8 @@ if len(sys.argv) > 1:
 else:
     arg = ''
 
-min_gain_filter = 20.0  # dB
+min_gain_filter = 25.0  # dB
+filter_limit = 0.010
 
 TRUNC_ANALYSIS = False
 if arg.lower().strip() == 'trunc':
@@ -99,7 +100,6 @@ def load_data(file):
 
 radar = 'uhf'
 ind = 0
-filter_limit = 0.015
 
 select = np.load(category_files[radar][ind])
 data_file = paths['data_paths'][radar][ind]
@@ -220,7 +220,7 @@ _kv = pyant.coordinates.sph_to_cart(_kv, radians=False)
 S = beam0.gain(_kv)
 
 p1, = ax2.plot(90 - theta, np.log10(S)*10.0, color='r')
-ax.hist(zenith_ang)
+ax.hist(zenith_ang, bins=10)
 
 ax2.yaxis.label.set_color(p1.get_color())
 ax2.tick_params(axis='y', colors=p1.get_color())
