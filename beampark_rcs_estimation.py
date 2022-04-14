@@ -159,7 +159,7 @@ def snr_cut_weighting(off_weight, idx_y, SNR_sim, not_used, snrdb_lim_rel):
             sns_lim = sns_max - snrdb_lim_rel
             too_high = sns_not > sns_lim
 
-            snr_cut_matching = (sns_not[too_high] - sns_lim)/sns_max
+            snr_cut_matching = sns_not[too_high]/sns_max
             snr_diff = snr_cut_matching*off_weight[not_used][idx_n][too_high]
             
             snr_cut_matching = np.sum(snr_diff**2)
