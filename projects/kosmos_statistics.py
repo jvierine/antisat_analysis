@@ -193,6 +193,11 @@ for radar in save_paths:
                 include_total=include_total,
             )
 
+tot_size_dist = {
+    'kosmos': [],
+    'background': [],
+}
+
 for radar in data_type:
     for ind in range(len(data_type[radar])):
         for x in range(6):
@@ -200,13 +205,39 @@ for radar in data_type:
         type_data = tot_data[radar][ind][1]
         type_select = np.concatenate(tot_data[radar][ind][0])
 
+        t, r, v, snr, dur, diam = type_data
+        select = kosmos_select(type_select)
+        tot_size_dist['kosmos'].append(diam[select])
+        tot_size_dist['background'].append(diam[np.logical_not(select)])
+
         for include_total in [True, False]:
             kosm = 'kosmos_' if include_total else ''
             name = data_type[radar][ind][0]
             plot_statistics(
                 type_data, 
-                kosmos_select(type_select), 
+                select, 
                 tot_pth / f'{escape(name)}_{kosm}stat.png',
                 data_type[radar][ind][0],
                 include_total=include_total,
             )
+
+tot_size_dist['kosmos'] = np.concatenate(tot_size_dist['kosmos'])
+tot_size_dist['background'] = np.concatenate(tot_size_dist['background'])
+
+fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
+for axi, key in enumerate(['background', 'kosmos']):
+    ok_vals = np.logical_or(np.isinf(tot_size_dist[key]), np.isnan(tot_size_dist[key]))
+    ok_vals = np.logical_not(ok_vals)
+    _logdiam = np.log10(tot_size_dist[key][ok_vals])
+    bins = int(np.round(np.sqrt(len(_logdiam))))
+    bin_edges = np.linspace(np.nanmin(_logdiam), np.nanmax(_logdiam), num=bins + 1, endpoint=True)
+    axes[axi].hist(_logdiam, bins=bin_edges, color='b')
+
+axes[1].set_xlabel("Minimum diameter [log10(cm)]")
+axes[0].set_ylabel("Detections")
+axes[1].set_ylabel("Detections")
+axes[0].set_title('All background detections')
+axes[1].set_title('All KOSMOS-1408 detections')
+
+fig.savefig(tot_pth / 'kosmos_min_diam_stat.png',)
+plt.close(fig)
