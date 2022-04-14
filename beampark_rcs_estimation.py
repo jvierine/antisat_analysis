@@ -940,14 +940,14 @@ def main_estimate(args):
         plt.close(fig)
 
         peak_diams_mat = 1e2*diams_at_peak.reshape(matches_mat.shape)
-        peak_small_lim = np.percentile(np.log10(matches[np.logical_not(np.isnan(matches))]).flatten(), 0.5)
+        peak_small_lim = np.percentile(np.log10(matches[np.logical_not(np.isnan(matches))]).flatten(), 1)
         peak_diams_mat[np.log10(matches_mat) > peak_small_lim] = np.nan
 
         fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True, sharey=True)
         pmesh = axes[0].pcolormesh(
             incs_mat, 
             nus_mat, 
-            peak_diams_mat,
+            np.log10(peak_diams_mat),
         )
         if not np.all(np.isnan(peak_diams_mat)):
             axes[0].set_xlim(
@@ -959,7 +959,7 @@ def main_estimate(args):
                 np.max(nus_mat[np.logical_not(np.isnan(peak_diams_mat))]),
             )
         cbar = fig.colorbar(pmesh, ax=axes[0])
-        cbar.set_label('Diameter at peak SNR [cm]')
+        cbar.set_label('Diameter at peak SNR [log10(cm)]')
         axes[0].set_ylabel('Anomaly perturbation [deg]')
 
         matches_mat_tmp = matches_mat.copy()
