@@ -122,6 +122,21 @@ local_point = pyant.coordinates.sph_to_cart(sph_point, radians=False)
 ecef_point = sorts.frames.enu_to_ecef(tx.lat, tx.lon, tx.alt, local_point, radians=False)
 ecef_st = tx.ecef
 
+teme_point = sorts.frames.convert(
+    epoch, 
+    np.hstack([ecef_point, np.ones_like(ecef_point)]), 
+    in_frame='ITRS', 
+    out_frame='TEME',
+)
+teme_point = teme_point[:3]
+teme_st = sorts.frames.convert(
+    epoch, 
+    np.hstack([ecef_st, np.ones_like(ecef_st)]), 
+    in_frame='ITRS', 
+    out_frame='TEME',
+)
+teme_st = teme_st[:3]
+
 r_ecef = ecef_st + r_obj*ecef_point
 r_teme = sorts.frames.convert(
     epoch, 
@@ -144,12 +159,47 @@ orb_0 = pyorb.Orbit(
 orb_0.kepler = np.tile(base_orb.kepler, (1, orb_samp))
 orb_0.v = orb_0.v + np.random.randn(3, orb_samp)*delta_v_std
 
+orb_0.omega = np.random.rand(len(orb_0))*360.0
+anoms = np.zeros_like(orb_0.anom)
+angs = np.zeros_like(orb_0.anom)
+nu_samp = np.linspace(0, 360, 2000)
+for ind, orb in tqdm(enumerate(orb_0), total=orb_samp):
+    _orbs = orb.copy()
+    _orbs.allocate(len(nu_samp))
+    _orbs._kep[:, :] = orb._kep[:, 0][:, None]
+    _orbs._kep[5, :] = nu_samp
+    _orbs.calculate_cartesian()
+    ang = pyant.coordinates.vector_angle(
+        teme_point, 
+        _orbs.cartesian[:3, :] - teme_st[:, None],
+    )
+    anoms[ind] = nu_samp[np.argmin(ang)]
+    angs[ind] = np.min(ang)
+
+orb_0.anom = anoms
+
 states = sorts.frames.convert(
     epoch, 
     orb_0.cartesian, 
     in_frame='TEME', 
     out_frame='ITRS',
 )
+
+
+fig = plt.figure(figsize=(15, 15))
+ax = fig.add_subplot(111, projection='3d')
+sorts.plotting.grid_earth(ax)
+ax.plot(states[0, :], states[1, :], states[2, :], ".b")
+ax.plot(
+    [ecef_st[0], ecef_st[0] + ecef_point[0]*1000e3], 
+    [ecef_st[1], ecef_st[1] + ecef_point[1]*1000e3], 
+    [ecef_st[2], ecef_st[2] + ecef_point[2]*1000e3], 
+    "-g",
+)
+ax.set_title('ITRS distribution')
+fig.savefig(ref_output / 'ITRS_distribution.png')
+# plt.show()
+plt.close(fig)
 
 ranges, range_rates = get_range_and_range_rate(tx, states)
 
@@ -212,8 +262,9 @@ true_col = 'r'
 
 fig, axes = plt.subplots(2, 4, sharey='all', sharex='col', figsize=(12, 7))
 
-axes[0, 0].axvline(kepler_elems[0, 0]/sorts.constants.R_earth, label='Estimated')
-axes[0, 1].axvline(kepler_elems[1, 0], label='Estimated')
+# axes[0, 0].axvline(kepler_elems[0, 0]/sorts.constants.R_earth, label='Estimated')
+axes[0, 0].hist(kepler_elems[0, :]/sorts.constants.R_earth, label='Estimated')
+axes[0, 1].axvline(kepler_elems[1, 0])
 axes[0, 2].hist(kepler_elems[2, :])
 axes[0, 3].hist(kepler_elems[4, :])
 axes[0, 0].legend()
