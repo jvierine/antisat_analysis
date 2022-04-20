@@ -486,8 +486,8 @@ def plot_match(
     axes[1, 0].set_ylabel('Normalized SNR [1]')
     axes[1, 1].set_ylabel('Normalized SNR [dB]')
     title_date = results_folder.stem.split('_')
-    fig.suptitle(f'{title_date[0].upper()} - {mdate}: d_cut={match_data[0]:.2e}, d_miss={match_data[1]:.2e}, d_hit={match_data[2]:.2e}, D={match_data[3]:.2e}')
-    fig.savefig(results_folder / f'match{mch_rank}_data.png')
+    fig.suptitle(f'{title_date[0].upper()} - {mdate}:\nd_cut={match_data[0]:.2e}, d_miss={match_data[1]:.2e}, d_hit={match_data[2]:.2e}, D={match_data[3]:.2e}')
+    fig.savefig(results_folder / f'match{mch_rank}_data.{args.format}')
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(12, 8))
@@ -503,7 +503,7 @@ def plot_match(
     )
     ax.set_xlabel('kx [1]')
     ax.set_ylabel('ky [1]')
-    fig.savefig(results_folder / f'match{mch_rank}_traj_gain.png')
+    fig.savefig(results_folder / f'match{mch_rank}_traj_gain.{args.format}')
     plt.close(fig)
 
 
@@ -923,7 +923,7 @@ def main_estimate(args):
         cbar.set_label('Sample angular area [sr]')
         axes[1, 1].set_xlabel('Inclination perturbation [deg]')
 
-        fig.savefig(results_folder / 'diam_prob_funcs.png')
+        fig.savefig(results_folder / f'diam_prob_funcs.{args.format}')
         plt.close(fig)
 
         fig, ax = plt.subplots(figsize=(12, 8))
@@ -936,7 +936,7 @@ def main_estimate(args):
         cbar.set_label('Diameter at peak SNR [log10(cm)]')
         ax.set_xlabel('Inclination perturbation [deg]')
         ax.set_ylabel('Anomaly perturbation [deg]')
-        fig.savefig(results_folder / 'diam_peak_heat.png')
+        fig.savefig(results_folder / f'diam_peak_heat.{args.format}')
         plt.close(fig)
 
         peak_diams_mat = 1e2*diams_at_peak.reshape(matches_mat.shape)
@@ -974,7 +974,7 @@ def main_estimate(args):
         axes[1].set_xlabel('Inclination perturbation [deg]')
         axes[1].set_ylabel('Anomaly perturbation [deg]')
 
-        fig.savefig(results_folder / 'filt_diam_peak_heat.png')
+        fig.savefig(results_folder / f'filt_diam_peak_heat.{args.format}')
         plt.close(fig)
 
         fig, ax = plt.subplots(figsize=(12, 8))
@@ -986,7 +986,7 @@ def main_estimate(args):
         )
         ax.set_xlabel('Diameter at peak SNR [log10(cm)]')
         ax.set_ylabel('Probability (from Distance function) [1]')
-        fig.savefig(results_folder / 'diam_prob_dist.png')
+        fig.savefig(results_folder / f'diam_prob_dist.{args.format}')
         plt.close(fig)
 
         fig, ax = plt.subplots(figsize=(12, 8))
@@ -999,7 +999,7 @@ def main_estimate(args):
         )
         ax.set_xlabel('Diameter at peak SNR [log10(cm)]')
         ax.set_ylabel('Distance function [1]')
-        fig.savefig(results_folder / 'diam_match_dist.png')
+        fig.savefig(results_folder / f'diam_match_dist.{args.format}')
         plt.close(fig)
 
         mch_rank = 0
@@ -1049,7 +1049,7 @@ def main_estimate(args):
         cbar.set_label('Distance function [1]')
         ax.set_xlabel('Inclination perturbation [deg]')
         ax.set_ylabel('Anomaly perturbation [deg]')
-        fig.savefig(results_folder / 'match_heat.png')
+        fig.savefig(results_folder / f'match_heat.{args.format}')
         plt.close(fig)
 
         fig, ax = plt.subplots(figsize=(12, 8))
@@ -1059,7 +1059,7 @@ def main_estimate(args):
         cbar.set_label('Distance function [log10(1)]')
         ax.set_xlabel('Inclination perturbation [deg]')
         ax.set_ylabel('Anomaly perturbation [deg]')
-        fig.savefig(results_folder / 'log_match_heat.png')
+        fig.savefig(results_folder / f'log_match_heat.{args.format}')
         plt.close(fig)
 
         for weight, name, fname in zip(
@@ -1074,7 +1074,7 @@ def main_estimate(args):
             cbar.set_label(f'{name} [1]')
             ax.set_xlabel('Inclination perturbation [deg]')
             ax.set_ylabel('Anomaly perturbation [deg]')
-            fig.savefig(results_folder / f'{fname}_heat.png')
+            fig.savefig(results_folder / f'{fname}_heat.{args.format}')
             plt.close(fig)
 
         fig, ax = plt.subplots(figsize=(12, 8))
@@ -1084,7 +1084,7 @@ def main_estimate(args):
         cbar.set_label('Peak SNR angle from boresight [deg]')
         ax.set_xlabel('Inclination perturbation [deg]')
         ax.set_ylabel('Anomaly perturbation [deg]')
-        fig.savefig(results_folder / 'offaxis_heat.png')
+        fig.savefig(results_folder / f'offaxis_heat.{args.format}')
         plt.close(fig)
 
         cmap = cm.get_cmap('plasma')
@@ -1124,11 +1124,11 @@ def main_estimate(args):
             ax.set_xlabel('kx [1]')
             ax.set_ylabel('ky [1]')
 
-        fig1.savefig(results_folder / 'sample_trajs.png')
+        fig1.savefig(results_folder / f'sample_trajs.{args.format}')
         plt.close(fig1)
-        fig2.savefig(results_folder / 'sample_trajs_gain.png')
+        fig2.savefig(results_folder / f'sample_trajs_gain.{args.format}')
         plt.close(fig2)
-        fig3.savefig(results_folder / 'sample_peak_match.png')
+        fig3.savefig(results_folder / f'sample_peak_match.{args.format}')
         plt.close(fig3)
 
         pbar.update(1)
@@ -1355,7 +1355,7 @@ def main_predict(args):
         axes[0, 0].set_xlabel('Jitter [s]')
         axes[1, 0].set_ylabel('Distance [1]')
         fig.suptitle('Jitter search using matching function')
-        fig.savefig(results_folder / 'correlated_jitter_search.png')
+        fig.savefig(results_folder / f'correlated_jitter_search.{args.format}')
         plt.close(fig)
 
         fig, ax = plt.subplots(figsize=(12, 8))
@@ -1363,14 +1363,14 @@ def main_predict(args):
         ax.plot(data['t'], data['r'])
         ax.plot([data['t'].values[peak_snr_id]], [r[meas_id]], 'or')
 
-        fig.savefig(results_folder / 'correlated_pass_range_match.png')
+        fig.savefig(results_folder / f'correlated_pass_range_match.{args.format}')
         plt.close(fig)
 
         fig, ax = plt.subplots(figsize=(12, 8))
         ax.plot(pth[0, :], pth[1, :], '-w')
         pyant.plotting.gain_heatmap(radar.tx[0].beam, min_elevation=85.0, ax=ax)
 
-        fig.savefig(results_folder / 'correlated_pass_pth_gain.png')
+        fig.savefig(results_folder / f'correlated_pass_pth_gain.{args.format}')
         plt.close(fig)
 
         fig, axes = plt.subplots(2, 2, figsize=(16, 8), sharex=True)
@@ -1411,7 +1411,7 @@ def main_predict(args):
         title_date = results_folder.stem.split('_')
         mdate = Time(data['t'].values[peak_snr_id], format='unix', scale='utc').iso
         fig.suptitle(f'{title_date[0].upper()} - {mdate}: NORAD-ID = {norad}')
-        fig.savefig(results_folder / 'correlated_pass_snr_match.png')
+        fig.savefig(results_folder / f'correlated_pass_snr_match.{args.format}')
         plt.close(fig)
 
         offset_angle = pyant.coordinates.vector_angle(
@@ -1430,7 +1430,7 @@ def main_predict(args):
             object_id = obj_id,
             offset_angle = offset_angle,
         )
-        with open(results_folder / 'correlated_snr_prediction.pickle', 'wb') as fh:
+        with open(results_folder / f'correlated_snr_prediction.pickle', 'wb') as fh:
             pickle.dump(summary_data, fh)
 
         pbar.update(1)
@@ -1657,7 +1657,7 @@ def main_collect(args):
             ax.legend()
             pyant.plotting.gain_heatmap(radar.tx[0].beam, min_elevation=85.0, ax=ax)
 
-            fig.savefig(results_folder / 'compare_pass_pth_gain.png')
+            fig.savefig(results_folder / f'compare_pass_pth_gain.{args.format}')
             plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(12, 8))
@@ -1669,7 +1669,7 @@ def main_collect(args):
     )
     ax.set_xlabel('Diameter at peak SNR [log10(cm)]')
     ax.set_ylabel('Frequency (from Distance function probability) [1]')
-    fig.savefig(input_pth / 'diam_prob_dist.png')
+    fig.savefig(input_pth / f'diam_prob_dist.{args.format}')
     plt.close(fig)
 
     with open(collected_file, 'wb') as fh:
@@ -1845,6 +1845,11 @@ def build_parser():
         '-v',
         action='store_true', 
         help='Verbose output',
+    )
+    parser.add_argument(
+        '-f', '--format',
+        default='png',
+        help='Plot format',
     )
 
     subparsers = parser.add_subparsers(
