@@ -33,6 +33,9 @@ out_plots = OUTPUT / 'categorization'
 out_plots.mkdir(exist_ok=True)
 print(f'Using {OUTPUT} as output')
 
+clobber = False
+# fig_format = 'eps'
+fig_format = 'png'
 
 # In[3]:
 
@@ -135,7 +138,8 @@ def calculate_categories(radar, date_ind, kosmos_selection):
     category[kosmos_select] = Categories.correlated_kosmos
     
     out_categories = OUTPUT / f'{date}_{radar}_categories.npy'
-    np.save(out_categories, category)
+    if not out_categories.is_file() or clobber:
+        np.save(out_categories, category)
     
     return category, t_boxes, r_box, v_boxes, t, r, v
 
@@ -161,7 +165,7 @@ def plot_cat(category, t_boxes, r_box, v_boxes, t, r, v, radar, date_ind):
     for ind, legend, style in zip(range(4), category_names, styles):
         axes[0].plot(t[category == ind], r[category == ind], style, label=legend)
         axes_z[0].plot(t[category == ind], r[category == ind], style, label=legend)
-    axes[0].legend()
+    axes[0].legend(ncol=2)
     for t_box, v_box in zip(t_boxes, v_boxes):
         rect = patches.Rectangle(
             (t_box[0], r_box[0]), 
@@ -201,15 +205,15 @@ def plot_cat(category, t_boxes, r_box, v_boxes, t, r, v, radar, date_ind):
     axes_z[1].set_ylim(*v_boxes[0])
     axes_z[1].set_xlabel('Epoch + time [h]')
     
-    fig.savefig(out_plots / f'{date}_{radar}_rv_scatter.png')
+    fig.savefig(out_plots / f'{date}_{radar}_rv_scatter.{fig_format}')
 
-    fig, ax = plt.subplots(figsize=(12,6))
+    fig, ax = plt.subplots(figsize=(8, 6))
     ax.bar(range(4), [np.sum(category == ind) for ind in range(4)])
-    ax.set_xticks(range(4), labels=category_names)
+    ax.set_xticks(range(4), labels=[x.replace(' ', '\n') for x in category_names])
     ax.set_ylabel('Detections')
     ax.set_title(f'{radar_title[radar][date_ind]} beampark {date}')
     
-    fig.savefig(out_plots / f'{date}_{radar}_categories.png')
+    fig.savefig(out_plots / f'{date}_{radar}_categories.{fig_format}')
 
 
 # In[10]:

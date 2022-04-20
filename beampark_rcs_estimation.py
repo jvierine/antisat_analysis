@@ -959,7 +959,7 @@ def main_estimate(args):
                 np.max(nus_mat[np.logical_not(np.isnan(peak_diams_mat))]),
             )
         cbar = fig.colorbar(pmesh, ax=axes[0])
-        cbar.set_label('Diameter at peak SNR [log10(cm)]')
+        cbar.set_label('Diameter at peak SNR\n[log10(cm)]')
         axes[0].set_ylabel('Anomaly perturbation [deg]')
 
         matches_mat_tmp = matches_mat.copy()
@@ -970,7 +970,7 @@ def main_estimate(args):
             np.log10(matches_mat_tmp),
         )
         cbar = fig.colorbar(pmesh, ax=axes[1])
-        cbar.set_label('Distance function [log10(1)]')
+        cbar.set_label('Distance function\n[log10(1)]')
         axes[1].set_xlabel('Inclination perturbation [deg]')
         axes[1].set_ylabel('Anomaly perturbation [deg]')
 
