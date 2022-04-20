@@ -12,6 +12,9 @@ import pyant
 
 import sys
 
+# img_format = 'png'
+img_format = 'eps'
+
 '''
 
 python projects/kosmos_sizes.py 
@@ -228,7 +231,7 @@ ax.set_title('Estimated peak SNR location')
 ax.set_xlabel('Off-axis angle [deg]')
 ax.set_ylabel('Frequency')
 ax2.set_ylabel('Gain [dB]')
-fig.savefig(rcs_plot_path / 'estimated_offaxis_angles.png')
+fig.savefig(rcs_plot_path / f'estimated_offaxis_angles.{img_format}')
 plt.close(fig)
 
 side_lobe = 0.85
@@ -250,7 +253,7 @@ ax.legend()
 ax.set_title('Estimated peak SNR location')
 ax.set_xlabel('kx [1]')
 ax.set_ylabel('ky [1]')
-fig.savefig(rcs_plot_path / 'estimated_k_vecs.png')
+fig.savefig(rcs_plot_path / f'estimated_k_vecs.{img_format}')
 plt.close(fig)
 
 
@@ -300,7 +303,7 @@ axes[1].set_xlabel('Diameter at peak SNR [log10(cm)]')
 axes[0].set_ylabel('RCS at peak SNR [log10(cm^2)]')
 axes[1].set_ylabel('RCS at peak SNR [log10(cm^2)]')
 fig.suptitle('Scattering function region comparison')
-fig.savefig(rcs_plot_path / 'scattering_estimated_vs_boresight_diam.png')
+fig.savefig(rcs_plot_path / f'scattering_estimated_vs_boresight_diam.{img_format}')
 plt.close(fig)
 
 
@@ -331,7 +334,7 @@ for ax in axes:
 
 fig.suptitle('Size distribution estimated versus predicted')
 fig.set_tight_layout(True)
-fig.savefig(rcs_plot_path / 'predicted_vs_estimated_diam.png')
+fig.savefig(rcs_plot_path / f'predicted_vs_estimated_diam.{img_format}')
 plt.close(fig)
 
 fig, axes = plt.subplots(2, 1, figsize=(12, 8))
@@ -351,7 +354,7 @@ axes[1].set_xlabel('Diameter at peak SNR [log10(cm)]')
 axes[0].set_ylabel('Frequency [1]')
 axes[1].set_ylabel('Frequency [1]')
 fig.suptitle('Minimum possible diameter distribution')
-fig.savefig(rcs_plot_path / 'events_diam_vs_boresight_diam.png')
+fig.savefig(rcs_plot_path / f'events_diam_vs_boresight_diam.{img_format}')
 plt.close(fig)
 
 
@@ -373,7 +376,7 @@ ax.set_xlabel('Diameter at peak SNR [log10(cm)]')
 ax.set_ylabel('Frequency (from distance function peak) [1]')
 ax.set_title('Size distribution minimum distance function')
 ax.legend()
-fig.savefig(rcs_plot_path / 'kosmos_diam_peak_dist.png')
+fig.savefig(rcs_plot_path / f'kosmos_diam_peak_dist.{img_format}')
 plt.close(fig)
 
 
@@ -395,7 +398,7 @@ ax.set_xlabel('Diameter at peak SNR [log10(cm)]')
 ax.set_ylabel('Frequency (from distance function probability peak) [1]')
 ax.set_title('Size distribution from peak of probability distribution')
 ax.legend()
-fig.savefig(rcs_plot_path / 'kosmos_diam_prob_dist_peak_dist.png')
+fig.savefig(rcs_plot_path / f'kosmos_diam_prob_dist_peak_dist.{img_format}')
 plt.close(fig)
 
 
@@ -417,7 +420,7 @@ axes[1].set_xlabel('Diameter at peak SNR [log10(cm)]')
 axes[0].set_ylabel('Frequency [1]')
 axes[1].set_ylabel('Frequency [1]')
 fig.suptitle('Size distribution minimum distance function')
-fig.savefig(rcs_plot_path / 'kosmos_diam_peak_dist_sep.png')
+fig.savefig(rcs_plot_path / f'kosmos_diam_peak_dist_sep.{img_format}')
 plt.close(fig)
 
 
@@ -440,7 +443,7 @@ ax.set_xlabel('Diameter at peak SNR [log10(cm)]')
 ax.set_ylabel('Frequency (from distance function peak) [1]')
 ax.set_title('Size distribution minimum distance function')
 ax.legend()
-fig.savefig(rcs_plot_path / 'correlated_diam_peak_dist.png')
+fig.savefig(rcs_plot_path / f'correlated_diam_peak_dist.{img_format}')
 plt.close(fig)
 
 
@@ -463,7 +466,7 @@ ax.set_xlabel('Diameter at peak SNR [log10(cm)]')
 ax.set_ylabel('Frequency (from distance function peak) [1]')
 ax.set_title('Size distribution minimum distance function')
 ax.legend()
-fig.savefig(rcs_plot_path / 'uncorrelated_diam_peak_dist.png')
+fig.savefig(rcs_plot_path / f'uncorrelated_diam_peak_dist.{img_format}')
 plt.close(fig)
 
 
@@ -489,7 +492,7 @@ ax.set_xlabel('Diameter at peak SNR [log10(cm)]')
 ax.set_ylabel('Frequency (from distance function probability) [1]')
 ax.set_title('Size distribution from distance function distribution')
 ax.legend()
-fig.savefig(rcs_plot_path / 'kosmos_diam_prob_dist.png')
+fig.savefig(rcs_plot_path / f'kosmos_diam_prob_dist.{img_format}')
 plt.close(fig)
 
 
@@ -515,7 +518,7 @@ axes[1].set_xlabel('Diameter at peak SNR [log10(cm)]')
 axes[0].set_ylabel('Frequency [1]')
 axes[1].set_ylabel('Frequency [1]')
 fig.suptitle('Size distribution from distance function distribution')
-fig.savefig(rcs_plot_path / 'kosmos_diam_prob_dist_sep.png')
+fig.savefig(rcs_plot_path / f'kosmos_diam_prob_dist_sep.{img_format}')
 plt.close(fig)
 
 
@@ -541,7 +544,7 @@ ax.set_xlabel('Diameter at peak SNR [log10(cm)]')
 ax.set_ylabel('Frequency (from distance function probability) [1]')
 ax.set_title('Size distribution from distance function distribution')
 ax.legend()
-fig.savefig(rcs_plot_path / 'correlated_diam_prob_dist.png')
+fig.savefig(rcs_plot_path / f'correlated_diam_prob_dist.{img_format}')
 plt.close(fig)
 
 
@@ -567,7 +570,7 @@ ax.set_xlabel('Diameter at peak SNR [log10(cm)]')
 ax.set_ylabel('Frequency (from distance function probability) [1]')
 ax.set_title('Size distribution from distance function distribution')
 ax.legend()
-fig.savefig(rcs_plot_path / 'uncorrelated_diam_prob_dist.png')
+fig.savefig(rcs_plot_path / f'uncorrelated_diam_prob_dist.{img_format}')
 plt.close(fig)
 
 
@@ -589,7 +592,7 @@ ax.set_xlabel('Diameter at peak SNR [log10(cm)]')
 ax.set_ylabel('Frequency (from mean distance function probability) [1]')
 ax.set_title('Size distribution from mean distance function distribution')
 ax.legend()
-fig.savefig(rcs_plot_path / 'kosmos_diam_mean_dist.png')
+fig.savefig(rcs_plot_path / f'kosmos_diam_mean_dist.{img_format}')
 plt.close(fig)
 
 
@@ -611,7 +614,7 @@ ax.set_xlabel('Diameter at peak SNR [log10(cm)]')
 ax.set_ylabel('Frequency (from mean distance function probability) [1]')
 ax.set_title('Size distribution from mean distance function distribution')
 ax.legend()
-fig.savefig(rcs_plot_path / 'correlated_diam_mean_dist.png')
+fig.savefig(rcs_plot_path / f'correlated_diam_mean_dist.{img_format}')
 plt.close(fig)
 
 
@@ -653,5 +656,5 @@ ax.axhline(min_gain_filter, color='r')
 ax.set_xlabel('Distance function')
 ax.set_ylabel('Gain at peak SNR [dB]')
 
-fig.savefig(rcs_plot_path / 'dist_vs_diam.png')
+fig.savefig(rcs_plot_path / f'dist_vs_diam.{img_format}')
 plt.close(fig)

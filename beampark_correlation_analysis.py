@@ -8,6 +8,7 @@ import scipy.stats as st
 import matplotlib.pyplot as plt
 import numpy as np
 import h5py
+from astropy.time import Time
 
 
 '''
@@ -104,7 +105,11 @@ def main(input_args=None):
     parser.add_argument('--threshold', type=float, default=None, help='Treshold in elliptical distance to choose correlations')
     parser.add_argument('--range-rate-scaling', default=0.2, type=float, help='Scaling used on range rate in the sorting function of the correlator')
     parser.add_argument('--range-scaling', default=1.0, type=float, help='Scaling used on range in the sorting function of the correlator')
-
+    parser.add_argument(
+        '-f', '--format',
+        default='png',
+        help='Plot format',
+    )
     args = parser.parse_args()
 
     arg_input = args.input
@@ -133,6 +138,7 @@ def main(input_args=None):
 
         inds_sort = np.argsort(t)
 
+        epoch = Time(t.min(), format='unix')
         t = t[inds_sort] - t.min()
         r = r[inds_sort]
         v = v[inds_sort]
@@ -179,6 +185,8 @@ def main(input_args=None):
     else:
         threshold_ = threshold
 
+    title_str = f'{name.upper().replace("_", " ")} - {epoch.datetime.date()}'
+
     for ax in axes:
         ax.plot(xp, yp, '.b')
         ax.plot([0, 0], [yp.min(), yp.max()], '-r')
@@ -188,16 +196,16 @@ def main(input_args=None):
 
         ax.set_xlabel('Range residuals [km]')
         ax.set_ylabel('Range-rate residuals [km/s]')
-        ax.set_title(name)
+        ax.set_title(title_str)
 
     axes[1].set_xlim([-scale_x*threshold_, scale_x*threshold_])
     axes[1].set_ylim([-scale_y*threshold_, scale_y*threshold_])
 
     if out_path is not None:
-        fig.savefig(out_path / f'{name}_residuals.png')
+        fig.savefig(out_path / f'{name}_residuals.{args.format}')
         plt.close(fig)
 
-    fig, ax = plt.subplots(1, 1, figsize=(15, 15))
+    fig, ax = plt.subplots(1, 1, figsize=(8, 8))
     ax.hist(log10_elip_dst, num)
     if threshold is not None:
         ax.plot([np.log10(threshold), np.log10(threshold)], ax.get_ylim(), '-g', label='Input threshold')
@@ -207,11 +215,11 @@ def main(input_args=None):
 
     ax.set_xlabel('Elliptical compound residual [log10(1)]')
     ax.set_ylabel('Frequency [1]')
-    ax.set_title(name)
+    ax.set_title(title_str)
     ax.legend()
 
     if out_path is not None:
-        fig.savefig(out_path / f'{name}_ellipse_distance.png')
+        fig.savefig(out_path / f'{name}_ellipse_distance.{args.format}')
         plt.close(fig)
 
     select = np.logical_and(
@@ -232,7 +240,7 @@ def main(input_args=None):
     ax.legend()
     ax.set_ylabel('Range [km]')
     ax.set_xlabel('Time [h]')
-    ax.set_title(name)
+    ax.set_title(title_str)
 
     ax = axes[1]
     ax.plot(t[select]/3600.0, v[select], '.r')
@@ -242,7 +250,7 @@ def main(input_args=None):
     ax.set_xlabel('Time [h]')
 
     if out_path is not None:
-        fig.savefig(out_path / f'{name}_rv_t_correlations.png')
+        fig.savefig(out_path / f'{name}_rv_t_correlations.{args.format}')
         plt.close(fig)
 
     fig, ax = plt.subplots(1, 1, figsize=(15, 15))
@@ -251,10 +259,10 @@ def main(input_args=None):
     ax.legend()
     ax.set_xlabel('Range [km]')
     ax.set_ylabel('Range-rate [km/s]')
-    ax.set_title(name)
+    ax.set_title(title_str)
 
     if out_path is not None:
-        fig.savefig(out_path / f'{name}_rv_correlations.png')
+        fig.savefig(out_path / f'{name}_rv_correlations.{args.format}')
         plt.close(fig)
 
     if 'jitter_index' in metric.dtype.names:
@@ -264,10 +272,10 @@ def main(input_args=None):
         ax.hist([ji.flatten()[select], ji.flatten()[not_select]], stacked=True)
         ax.set_xlabel('Jitter index [1]')
         ax.set_ylabel('Frequency [1]')
-        ax.set_title(name)
+        ax.set_title(title_str)
 
         if out_path is not None:
-            fig.savefig(out_path / f'{name}_jitter.png')
+            fig.savefig(out_path / f'{name}_jitter.{args.format}')
             plt.close(fig)
 
     if out_path is None:
