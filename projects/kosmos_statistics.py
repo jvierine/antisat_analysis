@@ -20,6 +20,9 @@ print(f'Using {OUTPUT} as output')
 tot_pth = OUTPUT / 'all_kosmos_stat'
 tot_pth.mkdir(exist_ok=True)
 
+fig_format = 'eps'
+# fig_format = 'png'
+
 with open(OUTPUT / 'paths.pickle', 'rb') as fh:
     paths = pickle.load(fh)
 
@@ -75,6 +78,7 @@ def load_data(file):
 def plot_statistics(
             data, select, fname, title,
             include_total=False, size=(10, 8),
+            background=False,
         ):
 
     t, r, v, snr, dur, diam = data
@@ -88,7 +92,10 @@ def plot_statistics(
     
     bin_edges = np.linspace(np.nanmin(r), np.min([np.nanmax(r), 2800]), num=bins + 1, endpoint=True)
     if include_total:
-        axes[0, 0].hist(r, bins=bin_edges, color='b', label='Total')
+        if background:
+            axes[0, 0].hist(r[np.logical_not(select)], bins=bin_edges, color='b', label='Background')
+        else:
+            axes[0, 0].hist(r, bins=bin_edges, color='b', label='Total')
     axes[0, 0].hist(r[select], bins=bin_edges, color=col, label='KOSMOS-1408')
     axes[0, 0].set_xlabel("Range [km]")
     axes[0, 0].set_ylabel("Detections")
@@ -97,14 +104,20 @@ def plot_statistics(
 
     bin_edges = np.linspace(np.max([np.nanmin(v), -2.5]), np.min([np.nanmax(v), 2.5]), num=bins + 1, endpoint=True)
     if include_total:
-        axes[0, 1].hist(v, bins=bin_edges, color='b')
+        if background:
+            axes[0, 1].hist(v[np.logical_not(select)], bins=bin_edges, color='b')
+        else:
+            axes[0, 1].hist(v, bins=bin_edges, color='b')
     axes[0, 1].hist(v[select], bins=bin_edges, color=col)
     axes[0, 1].set_xlabel("Range-rate [km]")
     axes[0, 1].set_ylabel("Detections")
 
     bin_edges = np.linspace(np.nanmin(snrdb), np.nanmax(snrdb), num=bins + 1, endpoint=True)
     if include_total:
-        axes[1, 0].hist(snrdb, bins=bin_edges, color='b')
+        if background:
+            axes[1, 0].hist(snrdb[np.logical_not(select)], bins=bin_edges, color='b')
+        else:
+            axes[1, 0].hist(snrdb, bins=bin_edges, color='b')
     axes[1, 0].hist(snrdb[select], bins=bin_edges, color=col)
     axes[1, 0].set_xlabel("SNR [dB]")
     axes[1, 0].set_ylabel("Detections")
@@ -112,11 +125,15 @@ def plot_statistics(
     ok_vals = np.logical_or(np.isinf(diam), np.isnan(diam))
     ok_vals = np.logical_not(ok_vals)
     ok_vals_select = np.logical_and(select, ok_vals)
+    ok_vals_not_select = np.logical_and(np.logical_not(select), ok_vals)
     _logdiam = np.log10(diam[ok_vals])
     
     bin_edges = np.linspace(np.nanmin(_logdiam), np.nanmax(_logdiam), num=bins + 1, endpoint=True)
     if include_total:
-        axes[1, 1].hist(_logdiam, bins=bin_edges, color='b')
+        if background:
+            axes[1, 1].hist(np.log10(diam[ok_vals_not_select]), bins=bin_edges, color='b')
+        else:
+            axes[1, 1].hist(_logdiam, bins=bin_edges, color='b')
     axes[1, 1].hist(np.log10(diam[ok_vals_select]), bins=bin_edges, color=col)
     axes[1, 1].set_xlabel("Minimum diameter [log10(cm)]")
     axes[1, 1].set_ylabel("Detections")
@@ -188,10 +205,18 @@ for radar in save_paths:
             plot_statistics(
                 data, 
                 kosmos_select(select), 
-                save_paths[radar][ind] / f'{dates[radar][ind]}_{radar}_{kosm}stat.png',
+                save_paths[radar][ind] / f'{dates[radar][ind]}_{radar}_{kosm}stat.{fig_format}',
                 f'Detections {radar_title[radar][ind]} {dates[radar][ind]}',
                 include_total=include_total,
             )
+        plot_statistics(
+            data, 
+            kosmos_select(select), 
+            save_paths[radar][ind] / f'{dates[radar][ind]}_{radar}_kosmos_bg_stat.{fig_format}',
+            f'Detections {radar_title[radar][ind]} {dates[radar][ind]}',
+            include_total=True,
+            background=True,
+        )
 
 tot_size_dist = {
     'kosmos': [],
@@ -216,15 +241,23 @@ for radar in data_type:
             plot_statistics(
                 type_data, 
                 select, 
-                tot_pth / f'{escape(name)}_{kosm}stat.png',
+                tot_pth / f'{escape(name)}_{kosm}stat.{fig_format}',
                 data_type[radar][ind][0],
                 include_total=include_total,
             )
+        plot_statistics(
+            type_data, 
+            select, 
+            tot_pth / f'{escape(name)}_kosmos_bg_stat.{fig_format}',
+            data_type[radar][ind][0],
+            include_total=True,
+            background=True,
+        )
 
 tot_size_dist['kosmos'] = np.concatenate(tot_size_dist['kosmos'])
 tot_size_dist['background'] = np.concatenate(tot_size_dist['background'])
 
-fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
+fig, axes = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
 for axi, key in enumerate(['background', 'kosmos']):
     ok_vals = np.logical_or(np.isinf(tot_size_dist[key]), np.isnan(tot_size_dist[key]))
     ok_vals = np.logical_not(ok_vals)
@@ -239,5 +272,5 @@ axes[1].set_ylabel("Detections")
 axes[0].set_title('All background detections')
 axes[1].set_title('All KOSMOS-1408 detections')
 
-fig.savefig(tot_pth / 'kosmos_min_diam_stat.png',)
+fig.savefig(tot_pth / f'kosmos_min_diam_stat.{fig_format}')
 plt.close(fig)

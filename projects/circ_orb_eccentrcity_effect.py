@@ -23,6 +23,8 @@ print(f'Using {OUTPUT} as output')
 ref_output = OUTPUT / 'all_kosmos_a_i'
 ref_output.mkdir(exist_ok=True)
 
+# fig_format = 'png'
+fig_format = 'eps'
 
 orb_samp = 1000
 zero_res = 10000
@@ -197,7 +199,7 @@ ax.plot(
     "-g",
 )
 ax.set_title('ITRS distribution')
-fig.savefig(ref_output / 'ITRS_distribution.png')
+fig.savefig(ref_output / f'ITRS_distribution.{fig_format}')
 # plt.show()
 plt.close(fig)
 
@@ -263,30 +265,31 @@ true_col = 'r'
 fig, axes = plt.subplots(2, 4, sharey='all', sharex='col', figsize=(12, 7))
 
 # axes[0, 0].axvline(kepler_elems[0, 0]/sorts.constants.R_earth, label='Estimated')
-axes[0, 0].hist(kepler_elems[0, :]/sorts.constants.R_earth, label='Estimated')
+axes[0, 0].hist(kepler_elems[0, :]*1e-3, label='Estimated')
 axes[0, 1].axvline(kepler_elems[1, 0])
 axes[0, 2].hist(kepler_elems[2, :])
 axes[0, 3].hist(kepler_elems[4, :])
 axes[0, 0].legend()
-axes[0, 0].set_xlabel('Semi-major-axis [R_earth]')
-axes[0, 2].set_xlabel('Inclination [deg]')
-axes[0, 3].set_xlabel('RAAN [deg]')
+# axes[0, 0].set_xlabel('Semi-major axis [km]')
+# axes[0, 2].set_xlabel('Inclination [deg]')
+# axes[0, 3].set_xlabel('Longitude of\nascending node [deg]')
 axes[0, 0].set_ylabel('Frequency')
 
-axes[1, 0].hist(orb_0.kepler[0, :]/sorts.constants.R_earth, label='True', color=true_col)
+axes[1, 0].hist(orb_0.kepler[0, :]*1e-3, label='True', color=true_col)
 axes[1, 1].hist(orb_0.kepler[1, :], color=true_col)
 axes[1, 2].hist(orb_0.kepler[2, :], color=true_col)
 axes[1, 3].hist(orb_0.kepler[4, :], color=true_col)
 axes[1, 0].legend()
 
-axes[1, 0].set_xlabel('Semi-major-axis [R_earth]')
+axes[1, 0].set_xlabel('Semi-major axis [km]')
 axes[1, 1].set_xlabel('Eccentricity [1]')
 axes[1, 2].set_xlabel('Inclination [deg]')
-axes[1, 3].set_xlabel('RAAN [deg]')
+axes[1, 3].set_xlabel('Longitude of\nascending node [deg]')
 axes[1, 0].set_ylabel('Frequency')
 
 fig.suptitle('Eccentric orbits with circular assumption')
-fig.savefig(ref_output / 'eccentric_effect_test.png')
+fig.savefig(ref_output / f'eccentric_effect_test.{fig_format}')
+plt.close(fig)
 
 fig, ax = plt.subplots(figsize=(12, 7))
 ax.plot(orb_0.period, orb_0.apoapsis, '.b', label='Apogee')
@@ -294,6 +297,6 @@ ax.plot(orb_0.period, orb_0.periapsis, '.r', label='Perigee')
 ax.legend()
 
 fig.suptitle('Input distribution gabbard diagram')
-fig.savefig(ref_output / 'eccentric_effect_gabbard.png')
-
+fig.savefig(ref_output / f'eccentric_effect_gabbard.{fig_format}')
+plt.close(fig)
 plt.show()

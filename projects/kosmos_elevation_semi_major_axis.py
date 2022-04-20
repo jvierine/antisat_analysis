@@ -26,6 +26,8 @@ tot_pth.mkdir(exist_ok=True)
 with open(OUTPUT / 'paths.pickle', 'rb') as fh:
     paths = pickle.load(fh)
 
+fig_format = 'png'
+# fig_format = 'eps'
 
 kosmos_prediction_file = OUTPUT / 'kosmos-1408_orekit_core_propagated.npz'
 kosmos_prediction = np.load(kosmos_prediction_file)
@@ -322,7 +324,7 @@ def plot_single_kepler(keps, solution_select, select):
 
     bins = int(np.round(np.sqrt(keps.shape[2])))
     
-    fig, axes = plt.subplots(1, 3, sharey='all')
+    fig, axes = plt.subplots(1, 3, sharey='all', figsize=(10, 4))
 
     use_keps = np.empty((keps.shape[0], keps.shape[2]), dtype=keps.dtype)
     for ind, sol in enumerate(solution_select):
@@ -335,10 +337,10 @@ def plot_single_kepler(keps, solution_select, select):
     axes[1].hist(use_keps[2, selects], bins=bins)
     axes[2].hist(use_keps[4, selects], bins=bins)
     axes[0].legend()
-    axes[0].set_xlabel('Semi-major-axis [km]')
+    axes[0].set_xlabel('Semi-major axis [km]')
     axes[0].set_ylabel('Frequency')
     axes[1].set_xlabel('Inclination [deg]')
-    axes[2].set_xlabel('RAAN [deg]')
+    axes[2].set_xlabel('Longitude of\nascending node [deg]')
     
     return fig, axes
 
@@ -397,17 +399,17 @@ for radar in save_paths:
         all_select_solutions.append(select_solutions)
         fig, axes = plot_kepler(kepler_elems)
         fig.suptitle(f'{radar_title[radar][ind]} circular-orbits')
-        fig.savefig(save_paths[radar][ind] / f'{radar_title[radar][ind].replace(" ", "_")}_kep_elements.png')
+        fig.savefig(save_paths[radar][ind] / f'{radar_title[radar][ind].replace(" ", "_")}_kep_elements.{fig_format}')
         plt.close(fig)
 
         fig, axes = plot_kepler(kepler_elems, select=kosmos_select(select))
         fig.suptitle(f'{radar_title[radar][ind]} circular-orbits')
-        fig.savefig(save_paths[radar][ind] / f'{radar_title[radar][ind].replace(" ", "_")}_kosmos_kep_elements.png')
+        fig.savefig(save_paths[radar][ind] / f'{radar_title[radar][ind].replace(" ", "_")}_kosmos_kep_elements.{fig_format}')
         plt.close(fig)
 
         fig, axes = plot_single_kepler(kepler_elems, select_solutions, kosmos_select(select))
         fig.suptitle(f'{radar_title[radar][ind]} disambiguated circular-orbits')
-        fig.savefig(save_paths[radar][ind] / f'{radar_title[radar][ind].replace(" ", "_")}_kosmos_kep_elements_disambiguated.png')
+        fig.savefig(save_paths[radar][ind] / f'{radar_title[radar][ind].replace(" ", "_")}_kosmos_kep_elements_disambiguated.{fig_format}')
         plt.close(fig)
 
 
@@ -417,15 +419,15 @@ all_select_solutions = np.concatenate(all_select_solutions, axis=0)
 
 fig, axes = plot_kepler(all_kepler_elems)
 fig.suptitle('EISCAT campaigns 2021-11-[19-29] circular-orbits')
-fig.savefig(tot_pth / 'all_kep_elements.png')
+fig.savefig(tot_pth / f'all_kep_elements.{fig_format}')
 plt.close(fig)
 
 fig, axes = plot_kepler(all_kepler_elems, select=kosmos_select(all_selects))
 fig.suptitle('EISCAT campaigns 2021-11-[19-29] circular-orbits')
-fig.savefig(tot_pth / 'all_kosmos_kep_elements.png')
+fig.savefig(tot_pth / f'all_kosmos_kep_elements.{fig_format}')
 plt.close(fig)
 
 fig, axes = plot_single_kepler(all_kepler_elems, all_select_solutions, kosmos_select(all_selects))
 fig.suptitle('EISCAT campaigns 2021-11-[19-29] disambiguated circular-orbits')
-fig.savefig(tot_pth / 'all_kosmos_kep_elements_disambiguated.png')
+fig.savefig(tot_pth / f'all_kosmos_kep_elements_disambiguated.{fig_format}')
 plt.close(fig)

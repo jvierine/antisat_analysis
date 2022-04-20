@@ -12,6 +12,9 @@ master_path = Path.home() / 'data/master_2009/celn_20090501_00.sim'
 t_stop = 3600.0
 snr_lim = 10.0
 
+# fig_format = 'png'
+fig_format = 'eps'
+
 HERE = Path(__file__).parent.resolve()
 OUTPUT = HERE / 'output' / 'russian_asat'
 print(f'Using {OUTPUT} as output')
@@ -186,7 +189,7 @@ ax.plot(
 ax.set_title('Detected peak SNR location')
 ax.set_xlabel('kx [1]')
 ax.set_ylabel('ky [1]')
-fig.savefig(out_pth / 'observed_k_vecs.png')
+fig.savefig(out_pth / f'observed_k_vecs.{fig_format}')
 plt.close(fig)
 
 fig, ax = plt.subplots(figsize=(12, 8))
@@ -214,9 +217,9 @@ ax2.yaxis.label.set_color(p1.get_color())
 ax2.tick_params(axis='y', colors=p1.get_color())
 ax.set_title('Detected peak SNR location')
 ax.set_xlabel('Off-axis angle [deg]')
-ax.set_ylabel('Frequency')
+ax.set_ylabel('Detected objects')
 ax2.set_ylabel('Gain [dB]')
-fig.savefig(out_pth / 'detected_offaxis_angles.png')
+fig.savefig(out_pth / f'detected_offaxis_angles.{fig_format}')
 plt.close(fig)
 
 
@@ -231,30 +234,31 @@ ax2.yaxis.label.set_color(p1.get_color())
 ax2.tick_params(axis='y', colors=p1.get_color())
 ax.set_title('Detected peak SNR location')
 ax.set_xlabel('Off-axis angle [deg]')
-ax.set_ylabel('Frequency')
+ax.set_ylabel('Detected objects')
 ax2.set_ylabel('Gain [dB]')
-fig.savefig(out_pth / 'detected_big_diam_offaxis_angles.png')
+fig.savefig(out_pth / f'detected_big_diam_offaxis_angles.{fig_format}')
 plt.close(fig)
 
-fig, ax = plt.subplots()
+fig, ax = plt.subplots(figsize=(8, 6))
 _, bins, _ = ax.hist(np.log10(pop['d'][objs]*1e2), 2*int(np.sqrt(len(objs))))
 ax.set_xlabel('Diameter [log10(cm)]')
-ax.set_ylabel('Frequency')
-fig.savefig(out_pth / 'master_observed_size_dist.png')
+ax.set_ylabel('Detected objects')
+fig.suptitle('MASTER-2008 EISCAT UHF simulation')
+fig.savefig(out_pth / f'master_observed_size_dist.{fig_format}')
 plt.close(fig)
 
 fig, ax = plt.subplots()
 ax.hist(np.log10(pop['d'][big_objs]*1e2), bins=bins)
 ax.set_xlabel('Diameter [log10(cm)]')
-ax.set_ylabel('Frequency')
-fig.savefig(out_pth / 'master_observed_big_diam_size_dist.png')
+ax.set_ylabel('Detected objects')
+fig.savefig(out_pth / f'master_observed_big_diam_size_dist.{fig_format}')
 plt.close(fig)
 
 fig, ax = plt.subplots()
 ax.scatter(np.log10(pop['d'][objs]*1e2), np.log10(sim_data['snr'][keep])*10, 2)
 ax.set_xlabel('Diameter [log10(cm)]')
 ax.set_ylabel('SNR [dB]')
-fig.savefig(out_pth / 'master_observed_size_vs_snr.png')
+fig.savefig(out_pth / f'master_observed_size_vs_snr.{fig_format}')
 plt.close(fig)
 
 fig, ax = plt.subplots()
@@ -262,12 +266,12 @@ ax.scatter(np.log10(pop['d'][sim_data['oid']]*1e2), np.log10(sim_data['snr'])*10
 ax.axhline(np.log10(snr_lim)*10, color='r')
 ax.set_xlabel('Diameter [log10(cm)]')
 ax.set_ylabel('SNR [dB]')
-fig.savefig(out_pth / 'master_size_vs_snr.png')
+fig.savefig(out_pth / f'master_size_vs_snr.{fig_format}')
 plt.close(fig)
 
 fig, ax = plt.subplots()
 ax.hist(np.log10(pop['d']*1e2), 100)
 ax.set_xlabel('Diameter [log10(cm)]')
 ax.set_ylabel('Frequency')
-fig.savefig(out_pth / 'master_size_dist.png')
+fig.savefig(out_pth / f'master_size_dist.{fig_format}')
 plt.close(fig)
