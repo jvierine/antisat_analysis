@@ -201,349 +201,351 @@ v_err = 1.0e2
 th_samples = 1000
 
 data_ids = {'uhf': 0, 'esr': 1}
-dual_ind = 1
-radar_lst = ['uhf', 'esr']
+for dual_ind in range(len(dual_corrs['cid'])):
+    radar_lst = ['uhf', 'esr']
+
+    mids = [dual_corrs[f'mid{ind}'][dual_ind] for ind in range(len(radar_lst))]
+    params = sorts.propagator.SGP4.get_TLE_parameters(
+        dual_corrs['line1'][dual_ind],
+        dual_corrs['line2'][dual_ind],
+    )
+    epoch0 = Time(params['jdsatepoch'], params['jdsatepochF'], format='jd')
+    datas = []
+
+    for radar in radar_lst:
+        data_file = paths['data_paths'][radar][data_ids[radar]]
+        data = load_data(data_file)
+        datas.append(data)
+
+    tv = [dat['times'][mid] - epoch0 for mid, dat in zip(mids, datas)]
+    tv = np.array([x.sec for x in tv])
+
+    states = prop.propagate(
+        tv, [dual_corrs['line1'][dual_ind], dual_corrs['line2'][dual_ind]],
+    )
+
+    prop.set(out_frame='TEME')
+    true_prior = prop.propagate(
+        np.min(tv), [dual_corrs['line1'][dual_ind], dual_corrs['line2'][dual_ind]],
+    )
+    tle_state = prop.propagate(
+        tv[0], [dual_corrs['line1'][dual_ind], dual_corrs['line2'][dual_ind]],
+    )
+    prop.set(out_frame='ITRS')
+
+    sim_r = []
+    meas_r = []
+    sim_v = []
+    meas_v = []
+    meas_times = []
+    for ind, (tx, dat, mid) in enumerate(zip(txs, datas, mids)):
+        r_s, v_s = get_range_and_range_rate(tx, states[:, ind].reshape(6, 1))
+        sim_r.append(r_s[0])
+        sim_v.append(v_s[0])
+        meas_r.append(dat['r'][mid])
+        meas_v.append(dat['v'][mid])
+        meas_times.append(dat['times'][mid])
 
 
-mids = [dual_corrs[f'mid{ind}'][dual_ind] for ind in range(len(radar_lst))]
-params = sorts.propagator.SGP4.get_TLE_parameters(
-    dual_corrs['line1'][dual_ind],
-    dual_corrs['line2'][dual_ind],
-)
-epoch0 = Time(params['jdsatepoch'], params['jdsatepochF'], format='jd')
-datas = []
+    sim_r = np.array(sim_r)
+    meas_r = np.array(meas_r)
+    sim_v = np.array(sim_v)
+    meas_v = np.array(meas_v)
 
-for radar in radar_lst:
-    data_file = paths['data_paths'][radar][data_ids[radar]]
-    data = load_data(data_file)
-    datas.append(data)
+    print('r-err [m]: ', meas_r - sim_r)
+    print('v-err [m]: ', meas_v - sim_v)
 
-tv = [dat['times'][mid] - epoch0 for mid, dat in zip(mids, datas)]
-tv = np.array([x.sec for x in tv])
+    pos_vecs = []
 
-states = prop.propagate(
-    tv, [dual_corrs['line1'][dual_ind], dual_corrs['line2'][dual_ind]],
-)
+    for ind, radar in enumerate(radar_lst):
+        sph_point = np.array(radar_info[radar][data_ids[radar]])
+        local_point = pyant.coordinates.sph_to_cart(sph_point, radians=False)
+        ecef_point = sorts.frames.enu_to_ecef(
+            txs[ind].lat, txs[ind].lon, txs[ind].alt, 
+            local_point, 
+            radians=False,
+        )
+        ecef_st = txs[ind].ecef
 
-prop.set(out_frame='TEME')
-true_prior = prop.propagate(
-    np.min(tv), [dual_corrs['line1'][dual_ind], dual_corrs['line2'][dual_ind]],
-)
-tle_state = prop.propagate(
-    tv[0], [dual_corrs['line1'][dual_ind], dual_corrs['line2'][dual_ind]],
-)
-prop.set(out_frame='ITRS')
+        r_ecef = ecef_st + meas_r[ind]*ecef_point
 
-sim_r = []
-meas_r = []
-sim_v = []
-meas_v = []
-meas_times = []
-for ind, (tx, dat, mid) in enumerate(zip(txs, datas, mids)):
-    r_s, v_s = get_range_and_range_rate(tx, states[:, ind].reshape(6, 1))
-    sim_r.append(r_s[0])
-    sim_v.append(v_s[0])
-    meas_r.append(dat['r'][mid])
-    meas_v.append(dat['v'][mid])
-    meas_times.append(dat['times'][mid])
+        r_teme = sorts.frames.convert(
+            meas_times[ind], 
+            np.hstack([r_ecef, np.ones_like(r_ecef)]), 
+            in_frame='ITRS', 
+            out_frame='TEME',
+        )
+        r_teme = r_teme[:3]
+        pos_vecs.append(r_teme)
 
-sim_r = np.array(sim_r)
-meas_r = np.array(meas_r)
-sim_v = np.array(sim_v)
-meas_v = np.array(meas_v)
+    dt = tv[1] - tv[0]
+    print('times: ', [dat['times'][mid].iso for mid, dat in zip(mids, datas)])
+    print('dt: ', dt)
 
-print('r-err [m]: ', meas_r - sim_r)
-print('v-err [m]: ', meas_v - sim_v)
+    if dt < 0:
+        orb = solve_lambert(pos_vecs[1], pos_vecs[0], -dt)
+        date0 = odlab.times.mjd2npdt(meas_times[1].mjd)
+    else:
+        orb = solve_lambert(pos_vecs[0], pos_vecs[1], dt)
+        date0 = odlab.times.mjd2npdt(meas_times[0].mjd)
 
-pos_vecs = []
+    print('inital lambert guess: ')
+    print(orb)
 
-for ind, radar in enumerate(radar_lst):
-    sph_point = np.array(radar_info[radar][data_ids[radar]])
-    local_point = pyant.coordinates.sph_to_cart(sph_point, radians=False)
-    ecef_point = sorts.frames.enu_to_ecef(
-        txs[ind].lat, txs[ind].lon, txs[ind].alt, 
-        local_point, 
+    if orb.e > 1:
+        print('lambert solver fails to find bound orbit, reverting to circular optimization')
+        theta = np.linspace(0, np.pi*2, th_samples)
+        sample_orbs_0 = theta_orbit(pos_vecs[0], meas_times[0], theta)
+        sample_orbs_0.calculate_kepler()
+        sample_orbs = sample_orbs_0.copy()
+        sample_orbs.propagate(-dt)
+
+        sample_itrs = sorts.frames.convert(
+            meas_times[1], 
+            sample_orbs.cartesian, 
+            in_frame='TEME', 
+            out_frame='ITRS',
+        )
+
+        sample_r, sample_v = get_range_and_range_rate(txs[1], sample_itrs)
+
+        metric = ((sample_r - meas_r[1])/r_err)**2 + ((sample_v - meas_v[1])/v_err)**2
+        best_th = np.argmin(metric)
+
+        orb = sample_orbs_0[best_th]
+
+        print(f'circular opt metric: \n\
+            [dr={sample_r[best_th] - meas_r[1]} m] \n\
+            [dv={sample_v[best_th] - meas_v[1]} m/s] \n\
+            [metric={metric[best_th]}]')
+        print('inital circular guess: ')
+        print(orb)
+        date0 = odlab.times.mjd2npdt(meas_times[0].mjd)
+        
+
+    odlab.profiler.enable('odlab')
+
+    # od_prop = sorts.propagator.Kepler(
+    #     settings=dict(
+    #         in_frame='TEME',
+    #         out_frame='ITRS',
+    #     )
+    # )
+    od_prop_sgp4 = sorts.propagator.SGP4(
+        settings=dict(
+            in_frame='TEME',
+            out_frame='ITRS',
+        )
+    )
+
+    od_prop = sorts.propagator.Kepler(
+        settings=dict(
+            in_frame='TEME',
+            out_frame='ITRS',
+        )
+    )
+
+    # orekit_data = OUTPUT / 'orekit-data-master.zip'
+    # if not orekit_data.is_file():
+    #     sorts.propagator.Orekit.download_quickstart_data(
+    #         orekit_data, verbose=True
+    #     )
+    # settings = dict(
+    #     in_frame='TEME',
+    #     out_frame='ITRS',
+    #     solar_activity_strength='WEAK',
+    #     integrator='DormandPrince853',
+    #     min_step=0.001,
+    #     max_step=240.0,
+    #     position_tolerance=20.0,
+    #     earth_gravity='HolmesFeatherstone',
+    #     gravity_order=(10, 10),
+    #     solarsystem_perturbers=['Moon', 'Sun'],
+    #     drag_force=False,
+    #     atmosphere='DTM2000',
+    #     radiation_pressure=False,
+    #     solar_activity='Marshall',
+    #     constants_source='WGS84',
+    # )
+    # od_prop = sorts.propagator.Orekit(
+    #     orekit_data=orekit_data,
+    #     settings=settings,
+    # )
+
+    source_data = []
+
+    dates = [odlab.times.mjd2npdt(_t.mjd) for _t in meas_times]
+
+    for ind, tx in enumerate(txs):
+        radar_data = np.empty((1,), dtype=odlab.sources.RadarTracklet.dtype)
+        radar_data['date'][0] = dates[ind]
+        radar_data['r'][0] = meas_r[ind]
+        radar_data['v'][0] = meas_v[ind]
+        radar_data['r_sd'][0] = r_err
+        radar_data['v_sd'][0] = v_err
+
+        source_data.append({
+            'data': radar_data,
+            'meta': dict(
+                tx_ecef = tx.ecef,
+                rx_ecef = tx.ecef,
+            ),
+            'index': 1,
+        })
+
+    pprint(source_data)
+    paths = odlab.SourcePath.from_list(source_data, 'ram')
+
+    sources = odlab.SourceCollection(paths = paths)
+    sources.details()
+
+    mean_prior, B, tle_epoch = od_prop_sgp4.get_mean_elements(
+        dual_corrs['line1'][dual_ind], 
+        dual_corrs['line2'][dual_ind], 
         radians=False,
     )
-    ecef_st = txs[ind].ecef
 
-    r_ecef = ecef_st + meas_r[ind]*ecef_point
 
-    r_teme = sorts.frames.convert(
-        meas_times[ind], 
-        np.hstack([r_ecef, np.ones_like(r_ecef)]), 
-        in_frame='ITRS', 
-        out_frame='TEME',
-    )
-    r_teme = r_teme[:3]
-    pos_vecs.append(r_teme)
+    state_variables = ['x', 'y', 'z', 'vx', 'vy', 'vz']
+    kep_state_variables = ['a', 'e', 'inc', 'apo', 'raan', 'mu0']
+    variables = state_variables
+    dtype = [(name, 'float64') for name in variables]
+    kep_dtype = [(name, 'float64') for name in kep_state_variables]
+    state0_named = np.empty((1,), dtype=dtype)
+    state1_named = np.empty((1,), dtype=kep_dtype)
+    tle0_named = np.empty((1,), dtype=kep_dtype)
+    for ind, name in enumerate(variables):
+        # state0_named[name] = orb.kepler[ind, 0]
+        state0_named[name] = orb.cartesian[ind, 0]
+        # state0_named[name] = true_prior[ind]
+        # state0_named[name] = mean_prior[ind]
 
-dt = tv[1] - tv[0]
-print('times: ', [dat['times'][mid].iso for mid, dat in zip(mids, datas)])
-print('dt: ', dt)
+    for ind, name in enumerate(kep_state_variables):
+        tle0_named[name] = mean_prior[ind]
 
-if dt < 0:
-    orb = solve_lambert(pos_vecs[1], pos_vecs[0], -dt)
-    date0 = odlab.times.mjd2npdt(meas_times[1].mjd)
-else:
-    orb = solve_lambert(pos_vecs[0], pos_vecs[1], dt)
-    date0 = odlab.times.mjd2npdt(meas_times[0].mjd)
 
-print('inital lambert guess: ')
-print(orb)
-
-if orb.e > 1:
-    print('lambert solver fails to find bound orbit, reverting to circular optimization')
-    theta = np.linspace(0, np.pi*2, th_samples)
-    sample_orbs_0 = theta_orbit(pos_vecs[0], meas_times[0], theta)
-    sample_orbs_0.calculate_kepler()
-    sample_orbs = sample_orbs_0.copy()
-    sample_orbs.propagate(-dt)
-
-    sample_itrs = sorts.frames.convert(
-        meas_times[1], 
-        sample_orbs.cartesian, 
-        in_frame='TEME', 
-        out_frame='ITRS',
-    )
-
-    sample_r, sample_v = get_range_and_range_rate(txs[1], sample_itrs)
-
-    metric = ((sample_r - meas_r[1])/r_err)**2 + ((sample_v - meas_v[1])/v_err)**2
-    best_th = np.argmin(metric)
-
-    orb = sample_orbs_0[best_th]
-
-    print(f'circular opt metric: \n\
-        [dr={sample_r[best_th] - meas_r[1]} m] \n\
-        [dv={sample_v[best_th] - meas_v[1]} m/s] \n\
-        [metric={metric[best_th]}]')
-    print('inital circular guess: ')
-    print(orb)
-    date0 = odlab.times.mjd2npdt(meas_times[0].mjd)
-    
-
-odlab.profiler.enable('odlab')
-
-# od_prop = sorts.propagator.Kepler(
-#     settings=dict(
-#         in_frame='TEME',
-#         out_frame='ITRS',
-#     )
-# )
-od_prop_sgp4 = sorts.propagator.SGP4(
-    settings=dict(
-        in_frame='TEME',
-        out_frame='ITRS',
-    )
-)
-
-od_prop = sorts.propagator.Kepler(
-    settings=dict(
-        in_frame='TEME',
-        out_frame='ITRS',
-    )
-)
-
-# orekit_data = OUTPUT / 'orekit-data-master.zip'
-# if not orekit_data.is_file():
-#     sorts.propagator.Orekit.download_quickstart_data(
-#         orekit_data, verbose=True
-#     )
-# settings = dict(
-#     in_frame='TEME',
-#     out_frame='ITRS',
-#     solar_activity_strength='WEAK',
-#     integrator='DormandPrince853',
-#     min_step=0.001,
-#     max_step=240.0,
-#     position_tolerance=20.0,
-#     earth_gravity='HolmesFeatherstone',
-#     gravity_order=(10, 10),
-#     solarsystem_perturbers=['Moon', 'Sun'],
-#     drag_force=False,
-#     atmosphere='DTM2000',
-#     radiation_pressure=False,
-#     solar_activity='Marshall',
-#     constants_source='WGS84',
-# )
-# od_prop = sorts.propagator.Orekit(
-#     orekit_data=orekit_data,
-#     settings=settings,
-# )
-
-source_data = []
-
-dates = [odlab.times.mjd2npdt(_t.mjd) for _t in meas_times]
-
-for ind, tx in enumerate(txs):
-    radar_data = np.empty((1,), dtype=odlab.sources.RadarTracklet.dtype)
-    radar_data['date'][0] = dates[ind]
-    radar_data['r'][0] = meas_r[ind]
-    radar_data['v'][0] = meas_v[ind]
-    radar_data['r_sd'][0] = r_err
-    radar_data['v_sd'][0] = v_err
-
-    source_data.append({
-        'data': radar_data,
-        'meta': dict(
-            tx_ecef = tx.ecef,
-            rx_ecef = tx.ecef,
+    input_data_state = {
+        'sources': sources,
+        'Models': [odlab.RadarPair]*len(sources),
+        'date0': date0,
+        # 'date0': odlab.times.mjd2npdt(tle_epoch.mjd),
+        'params': dict(
+            # B = B,
+            M0 = pyorb.M_earth,
+            SGP4_mean_elements = True,
         ),
-        'index': 1,
-    })
-
-pprint(source_data)
-paths = odlab.SourcePath.from_list(source_data, 'ram')
-
-sources = odlab.SourceCollection(paths = paths)
-sources.details()
-
-mean_prior, B, tle_epoch = od_prop_sgp4.get_mean_elements(
-    dual_corrs['line1'][dual_ind], 
-    dual_corrs['line2'][dual_ind], 
-    radians=False,
-)
+    }
 
 
-state_variables = ['x', 'y', 'z', 'vx', 'vy', 'vz']
-kep_state_variables = ['a', 'e', 'inc', 'apo', 'raan', 'mu0']
-variables = state_variables
-dtype = [(name, 'float64') for name in variables]
-kep_dtype = [(name, 'float64') for name in kep_state_variables]
-state0_named = np.empty((1,), dtype=dtype)
-state1_named = np.empty((1,), dtype=kep_dtype)
-tle0_named = np.empty((1,), dtype=kep_dtype)
-for ind, name in enumerate(variables):
-    # state0_named[name] = orb.kepler[ind, 0]
-    state0_named[name] = orb.cartesian[ind, 0]
-    # state0_named[name] = true_prior[ind]
-    # state0_named[name] = mean_prior[ind]
-
-for ind, name in enumerate(kep_state_variables):
-    tle0_named[name] = mean_prior[ind]
+    print('==== Start variables ====')
+    for key in state_variables:
+        print(f'{key}: {state0_named[key]}')
 
 
-input_data_state = {
-    'sources': sources,
-    'Models': [odlab.RadarPair]*len(sources),
-    'date0': date0,
-    # 'date0': odlab.times.mjd2npdt(tle_epoch.mjd),
-    'params': dict(
-        # B = B,
-        M0 = pyorb.M_earth,
-        SGP4_mean_elements = True,
-    ),
-}
+    post_kep = odlab.OptimizeLeastSquares(
+        data = input_data_state,
+        variables = variables,
+        state_variables = state_variables,
+        start = state0_named,
+        prior = None,
+        propagator = od_prop,
+        method = 'Nelder-Mead',
+        options = dict(
+            maxiter = 10000,
+            disp = False,
+            xatol = 1e-3,
+            # bounds = [
+            #     (None, None),
+            #     (0, 1),
+            #     (None, None),
+            #     (None, None),
+            #     (None, None),
+            #     (None, None),
+            # ]
+        ),
+    )
 
 
-print('==== Start variables ====')
-for key in state_variables:
-    print(f'{key}: {state0_named[key]}')
+    post_kep.run()
+
+    print('==== TLE State ====')
+    for key, val in zip(state_variables, tle_state):
+        print(f'{key}: {val}')
 
 
-post_kep = odlab.OptimizeLeastSquares(
-    data = input_data_state,
-    variables = variables,
-    state_variables = state_variables,
-    start = state0_named,
-    prior = None,
-    propagator = od_prop,
-    method = 'Nelder-Mead',
-    options = dict(
-        maxiter = 10000,
-        disp = False,
-        xatol = 1e-3,
-        # bounds = [
-        #     (None, None),
-        #     (0, 1),
-        #     (None, None),
-        #     (None, None),
-        #     (None, None),
-        #     (None, None),
-        # ]
-    ),
-)
+    print(' POST KEP \n')
+    print(post_kep.results)
+
+    exit()
+
+    post_kep_orb = pyorb.Orbit(
+        M0=pyorb.M_earth, 
+        m=0, 
+        num=1, 
+        radians=False,
+        cartesian = np.array([post_kep.results.MAP[key][0] for key in state_variables]).reshape(6, 1),
+    )
+    for ind, key in enumerate(kep_state_variables):
+        state1_named[key][0] = post_kep_orb.kepler[ind, 0]
+
+    post = odlab.OptimizeLeastSquares(
+        data = input_data_state,
+        variables = kep_state_variables,
+        state_variables = kep_state_variables,
+        start = state1_named,
+        prior = None,
+        propagator = od_prop_sgp4,
+        method = 'Nelder-Mead',
+        options = dict(
+            maxiter = 10000,
+            disp = False,
+            xatol = 1e-3,
+            bounds = [
+                (None, None),
+                (0, 1),
+                (None, None),
+                (None, None),
+                (None, None),
+                (None, None),
+            ]
+        ),
+    )
+    post.run()
 
 
-post_kep.run()
+    print('==== TLE variables ====')
+    for key in kep_state_variables:
+        print(f'{key}: {tle0_named[key]}')
 
-print('==== TLE State ====')
-for key, val in zip(state_variables, tle_state):
-    print(f'{key}: {val}')
-
-
-print(' POST KEP \n')
-print(post_kep.results)
-
-exit()
-
-post_kep_orb = pyorb.Orbit(
-    M0=pyorb.M_earth, 
-    m=0, 
-    num=1, 
-    radians=False,
-    cartesian = np.array([post_kep.results.MAP[key][0] for key in state_variables]).reshape(6, 1),
-)
-for ind, key in enumerate(kep_state_variables):
-    state1_named[key][0] = post_kep_orb.kepler[ind, 0]
-
-post = odlab.OptimizeLeastSquares(
-    data = input_data_state,
-    variables = kep_state_variables,
-    state_variables = kep_state_variables,
-    start = state1_named,
-    prior = None,
-    propagator = od_prop_sgp4,
-    method = 'Nelder-Mead',
-    options = dict(
-        maxiter = 10000,
-        disp = False,
-        xatol = 1e-3,
-        bounds = [
-            (None, None),
-            (0, 1),
-            (None, None),
-            (None, None),
-            (None, None),
-            (None, None),
-        ]
-    ),
-)
-post.run()
+    print('==== Start 1 variables ====')
+    for key in kep_state_variables:
+        print(f'{key}: {state1_named[key]}')
 
 
-print('==== TLE variables ====')
-for key in kep_state_variables:
-    print(f'{key}: {tle0_named[key]}')
+    print(post.results)
 
-print('==== Start 1 variables ====')
-for key in kep_state_variables:
-    print(f'{key}: {state1_named[key]}')
+    res_mean = np.array([post.results.MAP[key][0] for key in kep_state_variables])
 
+    od_prop.set(out_frame='TEME')
+    _state0 = od_prop_sgp4.propagate(
+        0, res_mean, epoch=tle_epoch, SGP4_mean_elements=True,
+    )
 
-print(post.results)
+    result_orb = pyorb.Orbit(
+        M0=pyorb.M_earth, 
+        m=0, 
+        num=1, 
+        radians=False,
+        cartesian = _state0.reshape(6, 1),
+        # cartesian = res_cart.reshape(6, 1),
+    )
+    print(result_orb)
 
-res_mean = np.array([post.results.MAP[key][0] for key in kep_state_variables])
+    # deltas = [0.1]*3 + [0.05]*3
+    # Sigma_orb = post.linear_MAP_covariance(post.results.MAP, deltas)
+    # print('Linearized MAP covariance:')
+    # print(Sigma_orb)
 
-od_prop.set(out_frame='TEME')
-_state0 = od_prop_sgp4.propagate(
-    0, res_mean, epoch=tle_epoch, SGP4_mean_elements=True,
-)
+    print(odlab.profiler)
 
-result_orb = pyorb.Orbit(
-    M0=pyorb.M_earth, 
-    m=0, 
-    num=1, 
-    radians=False,
-    cartesian = _state0.reshape(6, 1),
-    # cartesian = res_cart.reshape(6, 1),
-)
-print(result_orb)
-
-# deltas = [0.1]*3 + [0.05]*3
-# Sigma_orb = post.linear_MAP_covariance(post.results.MAP, deltas)
-# print('Linearized MAP covariance:')
-# print(Sigma_orb)
-
-print(odlab.profiler)
+    exit()
