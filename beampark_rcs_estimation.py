@@ -941,33 +941,33 @@ def main_estimate(args):
 
         peak_diams_mat = 1e2*diams_at_peak.reshape(matches_mat.shape)
         peak_small_lim = np.percentile(np.log10(matches[np.logical_not(np.isnan(matches))]).flatten(), 1)
-        peak_diams_mat[np.log10(matches_mat) > peak_small_lim] = np.nan
+        peak_bool_map = np.log10(matches_mat) <= peak_small_lim
 
         fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True, sharey=True)
         pmesh = axes[0].pcolormesh(
             incs_mat, 
             nus_mat, 
             np.log10(peak_diams_mat),
+            cmap=cm.get_cmap('nipy_spectral'),
         )
         if not np.all(np.isnan(peak_diams_mat)):
             axes[0].set_xlim(
-                np.min(incs_mat[np.logical_not(np.isnan(peak_diams_mat))]),
-                np.max(incs_mat[np.logical_not(np.isnan(peak_diams_mat))]),
+                np.min(incs_mat[peak_bool_map]),
+                np.max(incs_mat[peak_bool_map]),
             )
             axes[0].set_ylim(
-                np.min(nus_mat[np.logical_not(np.isnan(peak_diams_mat))]),
-                np.max(nus_mat[np.logical_not(np.isnan(peak_diams_mat))]),
+                np.min(nus_mat[peak_bool_map]),
+                np.max(nus_mat[peak_bool_map]),
             )
         cbar = fig.colorbar(pmesh, ax=axes[0])
         cbar.set_label('Diameter at peak SNR\n[log10(cm)]')
         axes[0].set_ylabel('Anomaly perturbation [deg]')
 
-        matches_mat_tmp = matches_mat.copy()
-        matches_mat_tmp[np.log10(matches_mat) > peak_small_lim] = np.nan
         pmesh = axes[1].pcolormesh(
             incs_mat, 
             nus_mat, 
-            np.log10(matches_mat_tmp),
+            np.log10(matches_mat),
+            cmap=cm.get_cmap('nipy_spectral'),
         )
         cbar = fig.colorbar(pmesh, ax=axes[1])
         cbar.set_label('Distance function\n[log10(1)]')
