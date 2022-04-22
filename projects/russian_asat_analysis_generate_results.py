@@ -51,10 +51,10 @@ for key in spade_data_paths:
         pth = Path(pth).resolve()
         if not out.parent.is_dir():
             out.parent.mkdir(parents=True, exist_ok=True)
+        cmd = f'python convert_spade_events_to_h5.py {str(pth)} {str(out)}'
+        cmds.append(cmd)
         if not out.is_file():
-            cmd = f'{str(pth)} {str(out)}'
             print(cmd)
-            cmds.append(cmd)
         else:
             print(f'{out} exsists, skipping...')
 
