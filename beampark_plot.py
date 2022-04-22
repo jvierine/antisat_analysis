@@ -104,8 +104,8 @@ def count_hist(t, start_time, end_time, bin_size = 1800.0):
     return bin_centers, hist
 
 
-def save_fig(name, save_path, fig, radar_escaped, fig_name):
-    fout = f'{radar_escaped}_{name}_{fig_name}.png'
+def save_fig(name, save_path, fig, radar_escaped, fig_name, fmt):
+    fout = f'{radar_escaped}_{name}_{fig_name}.{fmt}'
     if save_path is None:
         plt.show()
     else:
@@ -123,7 +123,7 @@ def time_name_formatting(t, radar):
     return radar_escaped, t_dt, start_time, end_time, fig_name
 
 
-def plot_statistics(data, radar_verbose, save_path=None, size=(10, 8)):
+def plot_statistics(data, radar_verbose, save_path=None, size=(10, 8), fmt='png'):
 
     t, r, v, snr, dur, diam = data
     radar_escaped, t_dt, start_time, end_time, fig_name = time_name_formatting(t, radar_verbose)
@@ -155,11 +155,11 @@ def plot_statistics(data, radar_verbose, save_path=None, size=(10, 8)):
     axes[1, 1].set_xlabel("Diameter [log10(cm)]")
     axes[1, 1].set_ylabel("Detections")
 
-    fig.suptitle(f'Observation statistics at {radar_verbose} {start_time.iso}')
-    save_fig('stat', save_path, fig, radar_escaped, fig_name)
+    fig.suptitle(f'Observation statistics at {radar_verbose} {start_time.datetime.date()}')
+    save_fig('stat', save_path, fig, radar_escaped, fig_name, fmt)
 
 
-def plot_detections(data, radar_verbose, save_path=None, size=(10, 8)):
+def plot_detections(data, radar_verbose, save_path=None, size=(10, 8), fmt='png'):
 
     t, r, v, snr, dur, diam = data
     radar_escaped, t_dt, start_time, end_time, fig_name = time_name_formatting(t, radar_verbose)
@@ -183,16 +183,16 @@ def plot_detections(data, radar_verbose, save_path=None, size=(10, 8)):
 
     set_mdates(axes[2])
 
-    fig.suptitle(f'Observations at {radar_verbose} {start_time.iso}')
-    save_fig('obs', save_path, fig, radar_escaped, fig_name)
+    fig.suptitle(f'Observations at {radar_verbose} {start_time.datetime.date()}')
+    save_fig('obs', save_path, fig, radar_escaped, fig_name, fmt)
 
     fig, ax = plt.subplots(figsize=size)
     ax.bar(bin_centers, hist, width=datetime.timedelta(seconds=bin_size))
     ax.set_ylabel("Detections [per 30 min]")
     ax.set_xlabel('Time')
     set_mdates(ax)
-    fig.suptitle(f'Observations at {radar_verbose} {start_time.iso}')
-    save_fig('counts', save_path, fig, radar_escaped, fig_name)
+    fig.suptitle(f'Observations at {radar_verbose} {start_time.datetime.date()}')
+    save_fig('counts', save_path, fig, radar_escaped, fig_name, fmt)
 
     fig, axes = plt.subplots(2, 1, sharex='all', figsize=size)
     axes[0].scatter(t_dt, r, 4)
@@ -205,8 +205,8 @@ def plot_detections(data, radar_verbose, save_path=None, size=(10, 8)):
     axes[1].set_ylim([-3, 3])
 
     set_mdates(axes[1])
-    fig.suptitle(f'Observations at {radar_verbose} {start_time.iso}')
-    save_fig('obs_vs_t', save_path, fig, radar_escaped, fig_name)
+    fig.suptitle(f'Observations at {radar_verbose} {start_time.datetime.date()}')
+    save_fig('obs_vs_t', save_path, fig, radar_escaped, fig_name, fmt)
 
     fig, ax = plt.subplots(figsize=size)
     ax.scatter(r, v, 4)
@@ -214,11 +214,11 @@ def plot_detections(data, radar_verbose, save_path=None, size=(10, 8)):
     ax.set_ylabel('Range-rate [km/s]')
     ax.set_xlim([200, 2000])
     ax.set_ylim([-3, 3])
-    fig.suptitle(f'Observations at {radar_verbose} {start_time.iso}')
-    save_fig('range_range_rate', save_path, fig, radar_escaped, fig_name)
+    fig.suptitle(f'Observations at {radar_verbose} {start_time.datetime.date()}')
+    save_fig('range_range_rate', save_path, fig, radar_escaped, fig_name, fmt)
 
 
-def plot_size_distribution(data, radar_verbose, tx, rx, save_path=None, size=(10, 8)):
+def plot_size_distribution(data, radar_verbose, tx, rx, save_path=None, size=(10, 8), fmt='png'):
     
     t, r, v, snr, dur, diam = data
     radar_escaped, t_dt, start_time, end_time, fig_name = time_name_formatting(t, radar_verbose)
@@ -250,8 +250,8 @@ def plot_size_distribution(data, radar_verbose, tx, rx, save_path=None, size=(10
     ax.set_xlabel('Range [km]')
     ax.set_ylabel('Diameter [log10(cm)]')
     ax.legend()
-    fig.suptitle(f'Observations at {radar_verbose} {start_time.iso}')
-    save_fig('min_diam_dist', save_path, fig, radar_escaped, fig_name)
+    fig.suptitle(f'Observations at {radar_verbose} {start_time.datetime.date()}')
+    save_fig('min_diam_dist', save_path, fig, radar_escaped, fig_name, fmt)
 
     fig, ax = plt.subplots(figsize=size)
     sc = ax.scatter(v, np.log10(diam), 4, 10*np.log10(snr), label='Detections')
@@ -261,8 +261,8 @@ def plot_size_distribution(data, radar_verbose, tx, rx, save_path=None, size=(10
     cb = fig.colorbar(sc, ax=ax)
     cb.set_label('SNR [dB]')
     ax.legend()
-    fig.suptitle(f'Observations at {radar_verbose} {start_time.iso}')
-    save_fig('dr_diam_snr', save_path, fig, radar_escaped, fig_name)
+    fig.suptitle(f'Observations at {radar_verbose} {start_time.datetime.date()}')
+    save_fig('dr_diam_snr', save_path, fig, radar_escaped, fig_name, fmt)
 
 
 def main(input_args=None):
@@ -280,6 +280,11 @@ def main(input_args=None):
         default=False, 
         action='store_true',
         help='Do not override the locale',
+    )
+    parser.add_argument(
+        '-f', '--format',
+        default='png',
+        help='Plot format',
     )
     parser.add_argument('data', type=str, nargs='+', help='Path(s) to measurement data to plot')
 
@@ -326,12 +331,14 @@ def main(input_args=None):
             radar_verbose = radar_verbose, 
             save_path=output_path, 
             size=(args.plot_width, args.plot_height),
+            fmt=args.format,
         )
         plot_detections(
             data, 
             radar_verbose = radar_verbose, 
             save_path=output_path, 
             size=(args.plot_width, args.plot_height),
+            fmt=args.format,
         )
         plot_size_distribution(
             data, 
@@ -340,6 +347,7 @@ def main(input_args=None):
             rx=rx,
             save_path=output_path, 
             size=(args.plot_width, args.plot_height),
+            fmt=args.format,
         )
 
 
