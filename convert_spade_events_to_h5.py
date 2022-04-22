@@ -100,6 +100,7 @@ def read_spade(target_dir, output_h5, SNR_lim=MIN_SNR, verbose=False):
     rts = []
     durs = []
     diams = []
+    accs = []
     
     data = get_spade_data(files, verbose=verbose)
 
@@ -134,6 +135,7 @@ def read_spade(target_dir, output_h5, SNR_lim=MIN_SNR, verbose=False):
         rts.append(row['RT'])
         durs.append(row['ED'])
         diams.append(row['DI'])
+        accs.append(row['AD'])
 
     t = np.array(t0s)
     r = np.array(rgs)
@@ -141,16 +143,18 @@ def read_spade(target_dir, output_h5, SNR_lim=MIN_SNR, verbose=False):
     snr = np.array(rts)**2.0
     dur = np.array(durs)
     diams = np.array(diams)
+    accs = np.array(accs)
     
     # store in hdf5 format
     if output_h5 is not None:
         ho = h5py.File(output_h5, "w")
         ho["t"] = t    # t
-        ho["r"] = r    # r  
-        ho["v"] = v    # vel
+        ho["r"] = r    # range
+        ho["v"] = v    # velocity
         ho["snr"] = snr  # snr
         ho["dur"] = dur  # duration
         ho["diams"] = diams  # minimum diameter
+        ho["a"] = accs  # acceleration
         ho.close()
 
     return t, r, v, snr, dur, diams
