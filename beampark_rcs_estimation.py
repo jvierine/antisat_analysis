@@ -21,6 +21,7 @@ import pyorb
 from convert_spade_events_to_h5 import get_spade_data
 from convert_spade_events_to_h5 import read_spade, date2unix
 from convert_spade_events_to_h5 import MIN_SNR
+from convert_spade_events_to_h5 import read_extended_event_data, load_spade_extended
 
 from discosweb_download import main as discosweb_download_main
 
@@ -220,51 +221,6 @@ def matching_function(data, SNR_sim, off_angles, args):
     meta = [snr_cut_matching, missed_points]
 
     return match, meta
-
-
-def load_spade_extended(path):
-    names = [f'{x}' for x in range(20)]
-    names[0] = 'hit'
-    names[1] = 'Y'
-    names[2] = 'M'
-    names[3] = 'D'
-    names[4] = 'h'
-    names[5] = 'm'
-    names[6] = 's'
-    names[7] = 'us'
-    
-    names[8] = 'r'
-    names[10] = 'SNR'
-    names[14] = 't'
-    names[9] = 'v'
-
-    data = pd.read_csv(
-        path, 
-        sep=r'[ ]+', 
-        comment='%', 
-        skip_blank_lines=True, 
-        names=names, 
-        skiprows=45,
-        engine='python',
-    )
-    data['SNR'] = data['SNR']**2
-    for ti in range(len(data['t']) - 1):
-        if data['t'].values[ti] > data['t'].values[ti + 1]:
-            data['t'].values[(ti + 1):] += data['t'].values[ti]
-    data['t'] = (data['t'] - np.min(data['t']))*1e-6
-    t_strs = []
-    for ind in range(len(data)):
-        t_strs.append(
-            '-'.join([f'{x:02}' for x in [data['Y'].values[ind], data['M'].values[ind], data['D'].values[ind]]]) 
-            + 'T' 
-            + ':'.join([f'{x:02}' for x in [data['h'].values[ind], data['m'].values[ind], data['s'].values[ind]]]) 
-            + f'.{data["us"].values[ind]}'
-        )
-    unix0 = Time(t_strs, format='isot', scale='utc')
-    data['unix'] = unix0.unix
-    data['r'] = data['r']*1e3
-
-    return data
 
 
 def locate_in_beam(x, orb, r_ecef, epoch):
@@ -505,44 +461,6 @@ def plot_match(
     ax.set_ylabel('ky [1]')
     fig.savefig(results_folder / f'match{mch_rank}_traj_gain.{args.format}')
     plt.close(fig)
-
-
-def read_extended_event_data(input_summaries, args):
-    _event_datas = []
-    for events_file in input_summaries:
-        _event_data = get_spade_data([events_file], verbose=args.v)
-
-        _extended_files = []
-        with open(events_file, 'r') as fh:
-            for ind, line in enumerate(fh):
-                if ind < 33 or len(line.strip()) == 0:
-                    continue
-                ev_name = line[181:].strip()
-                _extended_files.append(ev_name)
-        _event_data['event_name'] = _extended_files
-
-        # Filter like the h5 generator filters
-        disc = np.argwhere(_event_data['RT'].values**2.0 <= MIN_SNR).flatten()
-        _event_data.drop(disc, inplace=True)
-        _event_datas.append(_event_data)
-
-    event_data = pd.concat(_event_datas)
-
-    dts = []
-    for ind in range(len(event_data)):
-        t0 = date2unix(
-            int(event_data['YYYY'].values[ind]), 
-            int(event_data['MM'].values[ind]), 
-            int(event_data['DD'].values[ind]), 
-            int(event_data['hh'].values[ind]), 
-            int(event_data['mm'].values[ind]),
-            0,
-        )
-        t0 += event_data['ss.s'].values[ind]
-        dts.append(t0)
-    event_data['t'] = dts
-
-    return event_data
 
 
 def main_estimate(args):
