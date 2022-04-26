@@ -6,6 +6,16 @@ import matplotlib.pyplot as plt
 import h5py
 from pprint import pprint
 
+import sys
+
+top_dir = Path(__file__).parents[1].resolve()
+sys.path.append(str(top_dir))
+
+from convert_spade_events_to_h5 import get_spade_data
+from convert_spade_events_to_h5 import read_spade, date2unix
+from convert_spade_events_to_h5 import MIN_SNR
+from convert_spade_events_to_h5 import read_extended_event_data, load_spade_extended
+
 from lamberthub import izzo2015
 
 import odlab
@@ -161,6 +171,28 @@ corr2_file = paths['correlations']['esr'][1]
 dual_corr_file = out_pth / f'{str(all_dates[1])}_dual_correlations.npy'
 
 
+high_res_paths = {
+    'esr': [
+        Path('/home/danielk/data/spade/beamparks/esr/2021.11.23/LEO_32m_20211123_LONGRESULTS'),
+    ], 
+    'uhf': [
+        Path('/home/danielk/data/spade/beamparks/uhf/2021.11.23/LEO_UHF_20211123_LONGRESULTS'),
+    ],
+}
+high_res_files = {}
+for radar in high_res_paths:
+    for input_pth in high_res_paths[radar]:
+        _high_dat = {
+            'summaries': list(input_pth.rglob('events.txt')),
+            'files': list(input_pth.rglob('*.hlist')),
+        }
+        if radar in high_res_files:
+            high_res_files[radar]['summaries'] += _high_dat['summaries']
+            high_res_files[radar]['files'] += _high_dat['files']
+        else:
+            high_res_files[radar] = _high_dat
+pprint(high_res_files)
+
 if not dual_corr_file.is_file():
     cmd = f'python multi_beampark_correlator.py {tle_file} -o {dual_corr_file} {corr1_file} {corr2_file}'
     print('FILE NOT FOUND, RUN: \n\n')
@@ -214,7 +246,10 @@ for dual_ind in range(len(dual_corrs['cid'])):
 
     for radar in radar_lst:
         data_file = paths['data_paths'][radar][data_ids[radar]]
-        data = load_data(data_file)
+        data0 = load_data(data_file)
+
+        print(data0)
+        exit()
         datas.append(data)
 
     tv = [dat['times'][mid] - epoch0 for mid, dat in zip(mids, datas)]
@@ -254,6 +289,14 @@ for dual_ind in range(len(dual_corrs['cid'])):
 
     print('r-err [m]: ', meas_r - sim_r)
     print('v-err [m]: ', meas_v - sim_v)
+
+    exit()
+
+
+
+
+
+def junk():
 
     pos_vecs = []
 
@@ -547,5 +590,3 @@ for dual_ind in range(len(dual_corrs['cid'])):
     # print(Sigma_orb)
 
     print(odlab.profiler)
-
-    exit()
