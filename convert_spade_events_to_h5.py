@@ -158,15 +158,19 @@ def load_spade_extended(path):
         if data['t'].values[ti] > data['t'].values[ti + 1]:
             data['t'].values[(ti + 1):] += data['t'].values[ti]
     data['t'] = (data['t'] - np.min(data['t']))*1e-6
-    t_strs = []
+    dts = []
     for ind in range(len(data)):
-        t_strs.append(
-            '-'.join([f'{x:02}' for x in [data['Y'].values[ind], data['M'].values[ind], data['D'].values[ind]]]) 
-            + 'T' 
-            + ':'.join([f'{x:02}' for x in [data['h'].values[ind], data['m'].values[ind], data['s'].values[ind]]]) 
-            + f'.{data["us"].values[ind]}'
+        t0 = date2unix(
+            int(data['Y'].values[ind]), 
+            int(data['M'].values[ind]), 
+            int(data['D'].values[ind]), 
+            int(data['h'].values[ind]), 
+            int(data['m'].values[ind]),
+            int(data['s'].values[ind]),
         )
-    unix0 = Time(t_strs, format='isot', scale='utc')
+        t0 += float(data['us'].values[ind])*1e-6
+        dts.append(t0)
+    unix0 = Time(dts, format='unix', scale='utc')
     data['unix'] = unix0.unix
     data['r'] = data['r']*1e3
 
