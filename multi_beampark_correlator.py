@@ -20,11 +20,15 @@ python multi_beampark_correlator.py \
     ~/data/spade/beamparks/uhf/2021.11.23/space-track.tles \
     -o ~/data/spade/beamparks/uhf/2021.11.23/dual_correlations.npy \
     ~/data/spade/beamparks/{uhf,esr}/2021.11.23/correlation.h5
+
+python multi_beampark_correlator.py \
+    /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021_11_23_spacetrack.tle \
+    -o /home/danielk/git/antisat_analysis/projects/output/russian_asat/orbit_determination/2021-11-23_dual_correlations.npy \
+    /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_uhf_correlation.pickle \
+    /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_uhf_correlation_plots/eiscat_uhf_selected_correlations.npy \
+    /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_esr_correlation.pickle \
+    /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_esr_correlation_plots/eiscat_esr_selected_correlations.npy
 '''
-
-
-def metric_merge(metric, dr_scale, dv_scale):
-    return np.sqrt((metric['dr']/dr_scale)**2 + (metric['dv']/dv_scale)**2)
 
 
 def get_matches(data, bp, index):
@@ -34,7 +38,7 @@ def get_matches(data, bp, index):
 def main(input_args=None):
     parser = argparse.ArgumentParser(description='Analyse beampark correlation for a beampark')
     parser.add_argument('catalog', type=str, help='Catalog to which data was correlated')
-    parser.add_argument('inputs', type=str, nargs='+', help='Input correlation data files')
+    parser.add_argument('inputs', type=str, nargs='+', help='Input correlation data files and correlation selection files (input as pairs of "correlation_file selection_file")')
     parser.add_argument('-o', '--output', type=str, default='', help='Output OID save location')
     parser.add_argument('--target-epoch', type=str, default=None, help='When filtering unique TLEs use this target epoch [ISO]')
 
@@ -46,8 +50,11 @@ def main(input_args=None):
     else:
         args = parser.parse_args(input_args)
 
+    assert len(args.inputs) % 2 == 0
+
     tle_pth = pathlib.Path(args.catalog).resolve()
-    input_pths = [pathlib.Path(x).resolve() for x in args.inputs]
+    input_pths = [pathlib.Path(x).resolve() for x in args.inputs[0::2]]
+    select_pths = [pathlib.Path(x).resolve() for x in args.inputs[1::2]]
 
     if len(input_pths) < 2:
         raise ValueError('Need at least 2 correlation files')
@@ -55,30 +62,21 @@ def main(input_args=None):
     match_data = {}
     objects = {}
 
-    scale_x = 1.0
-    scale_y = 0.2
-
-    for ind, input_pth in enumerate(input_pths):
-        print(f'Loading: {input_pth}')
+    for ind, (input_pth, select_pth) in enumerate(zip(input_pths, select_pths)):
+        print(f'Loading: {input_pth.name} and {select_pth.name}')
         with h5py.File(input_pth, 'r') as ds:
             indecies = ds['matched_object_index'][()]
-            metric = ds['matched_object_metric'][()]
+            results = ds['matched_object_metric'][()]
             name = ds.attrs['radar_name']
 
-        x = metric['dr']*1e-3
-        y = metric['dv']*1e-3
+        select = np.load(select_pth)
 
-        elip_dst = np.sqrt((x/scale_x)**2 + (y/scale_y)**2)
-        
-        select = np.logical_and(
-            elip_dst[0,:] < 1.0,
-            np.logical_not(np.isnan(elip_dst[0,:])),
-        )
+        print(f'finished loading {name} [{results.shape} records]')
 
         # Pick only best matches in row 0
         match_data[ind] = {
             'match': indecies[0, :], 
-            'metric': metric[0, :],
+            'metric': results[0, :],
             'correlated': select,
         }
 
@@ -104,6 +102,7 @@ def main(input_args=None):
     possible_multi = 0
     multi_match_oids = []
     multi_match_mids = []
+    multi_match_datas = []
     for oid, bp in objects.items():
         # skip all objects only seen in one beampark
         if bp['num'] < 2:
@@ -115,23 +114,18 @@ def main(input_args=None):
             # if the same object is detected twice in one experiment
             mids[bpid] = mid[0]
         multi_match_mids.append(mids)
-
         multi_match_oids.append(oid)
 
-        merged_data = np.empty((bp['num'],), dtype=np.float64)
-
+        match_datas = {}
         for index in range(bp['num']):
             match = get_matches(match_data, bp, index)
-            _m = metric_merge(match, scale_x*1e3, scale_y*1e3)
-            _m = _m[np.logical_not(np.isnan(_m))]
-            if _m.size > 0:
-                _m = np.min(_m)
-            else:
-                _m = np.nan
-
-            merged_data[index] = _m
             ID = bp['beampark'][index]
-            print(f'Catalog-index (oid) - {oid:<6}: Beampark-{ID} -> residuals=({match["dr"][0]: .3e} m, {match["dv"][0]: .3e} m/s) -> combined={_m:.3e}')
+            match_datas[ID] = match
+
+            print(f'Catalog-index (oid) - {oid:<6}: Beampark-{ID} -> \
+                residuals=({match["dr"][0]: .3e} m, {match["dv"][0]: .3e} m/s) -> \
+                combined={match["metric"][0]:.3e}')
+        multi_match_datas.append(match_datas)
 
         possible_multi += 1
 
@@ -155,6 +149,10 @@ def main(input_args=None):
     _dtype += [('cid', np.int64)]
     for key in get_fields:
         _dtype += [(key, pop.dtypes[pop.fields.index(key)])]
+    _dtype += [(f'dr{ind}', np.float64) for ind in range(len(input_pths))]
+    _dtype += [(f'dv{ind}', np.float64) for ind in range(len(input_pths))]
+    _dtype += [(f'metric{ind}', np.float64) for ind in range(len(input_pths))]
+    _dtype += [(f'jitter{ind}', np.int64) for ind in range(len(input_pths))]
 
     _data = pop.data[multi_match_oids][get_fields]
     _data_m = np.empty((len(_data),), dtype=_dtype)
@@ -163,6 +161,12 @@ def main(input_args=None):
         _data_m[f'mid{ind}'] = multi_match_mids[:, ind]
     for key in get_fields:
         _data_m[key] = _data[key]
+    for dind, match_datas in enumerate(multi_match_datas):
+        for index, mdata in match_datas.items():
+            _data_m[f'dr{index}'][dind] = mdata['dr']
+            _data_m[f'dv{index}'][dind] = mdata['dv']
+            _data_m[f'metric{index}'][dind] = mdata['metric']
+            _data_m[f'jitter{index}'][dind] = mdata['jitter_index']
 
     if len(args.output) > 0:
         np.save(args.output, _data_m)
