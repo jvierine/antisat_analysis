@@ -302,6 +302,11 @@ th_samples = 1000
 
 if comm.size > 1:
     my_dual_inds = dual_inds[comm.rank::comm.size]
+else:
+    my_dual_inds = dual_inds
+
+# my_dual_inds = [0]
+# print('RUNNING DEBUG MODE')
 
 data_ids = {'uhf': 0, 'esr': 1}
 radar_lst = ['uhf', 'esr']
@@ -417,20 +422,38 @@ for dual_ind in my_dual_inds:
         print('r-err [m  ]: ', meas_r[ind] - sim_r[ind])
         print('v-err [m/s]: ', meas_v[ind] - sim_v[ind])
 
-    # fig, axes = plt.subplots(2, 2)
-    # axes[0, 0].plot(tvs[0], meas_r[0], 'r')
-    # axes[0, 0].plot(tvs[0], sim_r[0], 'b')
+    fig, axes = plt.subplots(2, 2, figsize=(15, 15))
+    axes[0, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, meas_r[0]*1e-3, 'r', label='Measurement')
+    axes[0, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, sim_r[0]*1e-3, 'b', label='TLE')
+    axes[0, 0].set_xlabel('Time past epoch [h]')
+    axes[0, 0].set_ylabel('Range [km]')
+    axes[0, 0].set_title(radar_lst[0])
+    axes[0, 0].legend()
 
-    # axes[1, 0].plot(tvs[0], meas_v[0], 'r')
-    # axes[1, 0].plot(tvs[0], sim_v[0], 'b')
+    axes[1, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, meas_v[0]*1e-3, 'r')
+    axes[1, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, sim_v[0]*1e-3, 'b')
+    axes[1, 0].set_xlabel('Time past epoch [h]')
+    axes[1, 0].set_ylabel('Doppler [km/s]')
+    axes[1, 0].set_title(radar_lst[0])
+    
+    axes[0, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, meas_r[1]*1e-3, 'r')
+    axes[0, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, sim_r[1]*1e-3, 'b')
+    axes[0, 1].set_xlabel('Time past epoch [h]')
+    axes[0, 1].set_ylabel('Range [km]')
+    axes[0, 1].set_title(radar_lst[1])
 
-    # axes[0, 1].plot(tvs[1], meas_r[1], 'r')
-    # axes[0, 1].plot(tvs[1], sim_r[1], 'b')
+    axes[1, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, meas_v[1]*1e-3, 'r')
+    axes[1, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, sim_v[1]*1e-3, 'b')
+    axes[1, 1].set_xlabel('Time past epoch [h]')
+    axes[1, 1].set_ylabel('Doppler [km/s]')
+    axes[1, 1].set_title(radar_lst[1])
 
-    # axes[1, 1].plot(tvs[1], meas_v[1], 'r')
-    # axes[1, 1].plot(tvs[1], sim_v[1], 'b')
-
-    # plt.show()
+    sup_tit = ''
+    for ind in range(len(radar_lst)):
+        sup_tit += f'Correlation {radar_lst[ind]}: r-err [m  ]: {-0.5*dual_corrs[f"dr{ind}"][dual_ind]}, '
+        sup_tit += f'v-err [m/s]: {-0.5*dual_corrs[f"dv{ind}"][dual_ind]}\n'
+    fig.suptitle(sup_tit)
+    fig.savefig(out_pth / f'MEAS_vs_TLE_dual_obj{dual_ind}.png')
 
     pos_vecs = []
     for ind, radar in enumerate(radar_lst):
@@ -552,9 +575,9 @@ for dual_ind in my_dual_inds:
         })
 
     # pprint(source_data)
-    paths = odlab.SourcePath.from_list(source_data, 'ram')
+    odlab_paths = odlab.SourcePath.from_list(source_data, 'ram')
 
-    sources = odlab.SourceCollection(paths = paths)
+    sources = odlab.SourceCollection(paths = odlab_paths)
     sources.details()
 
     state_variables = ['x', 'y', 'z', 'vx', 'vy', 'vz']
