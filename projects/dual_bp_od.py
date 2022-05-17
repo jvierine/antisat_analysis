@@ -6,6 +6,15 @@ import matplotlib.pyplot as plt
 import h5py
 from pprint import pprint
 
+try:
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+except ImportError:
+    class COMM_WORLD:
+        rank = 0
+        size = 1
+    comm = COMM_WORLD()
+
 import sys
 
 top_dir = Path(__file__).parents[1].resolve()
@@ -23,6 +32,16 @@ import sorts
 import pyorb
 import pyant
 
+clobber = False
+
+err_t_prop = 10*3600.0
+err_t_step = 10.0
+
+steps = 10000
+step_arr = np.ones((6,), dtype=np.float64)*0.1
+
+err_t_samp = np.arange(0, err_t_prop, err_t_step, dtype=np.float64)
+
 t_jitter = np.linspace(-5, 5, num=11)
 
 HERE = Path(__file__).parent.resolve()
@@ -32,8 +51,24 @@ print(f'Using {OUTPUT} as output')
 out_pth = OUTPUT / 'orbit_determination'
 out_pth.mkdir(exist_ok=True)
 
+results_data_file = out_pth / 'iod_results.pickle'
+
 with open(OUTPUT / 'paths.pickle', 'rb') as fh:
     paths = pickle.load(fh)
+
+
+def multi_vector_angle(a, b, radians=False):
+    a_norm = np.linalg.norm(a, axis=0)
+    b_norm = np.linalg.norm(b, axis=0)
+    proj = np.sum(a*b, axis=0)/(a_norm*b_norm)
+    proj[proj > 1.0] = 1.0
+    proj[proj < -1.0] = -1.0
+
+    theta = np.arccos(proj)
+    if not radians:
+        theta = np.degrees(theta)
+
+    return theta
 
 
 def solve_lambert(pos1, pos2, dt):
@@ -218,6 +253,28 @@ txs = [
     sorts.radars.eiscat_esr.tx[0],
 ]
 
+dual_inds = list(range(len(dual_corrs['cid'])))
+iod_results = {
+    'id': [None for ind in dual_inds],
+    'event': [None for ind in dual_inds],
+    'mcmc_teme_tle_diff': [None for ind in dual_inds],
+    'lsq_teme_tle_diff': [None for ind in dual_inds],
+}
+
+beam_fwhm = []
+for tx in txs:
+    _pointing = tx.beam.pointing.copy()
+    tx.beam.sph_point(0, 90)
+    G0 = tx.beam.sph_gain(0, 90)
+    _el_step = 0.01
+    _el = 90 - _el_step
+    G1 = tx.beam.sph_gain(0, _el)
+    while G1 > G0*0.5:
+        _el -= _el_step
+        G1 = tx.beam.sph_gain(0, _el)
+    beam_fwhm.append(2*(90 - _el))
+    tx.beam.point(_pointing)
+
 radar_info = {
     'uhf': [
         (90., 75., 1.),
@@ -243,11 +300,13 @@ r_err = 5.0e2
 v_err = 1.0e2
 th_samples = 1000
 
-data_ids = {'uhf': 0, 'esr': 1}
-# for dual_ind in range(len(dual_corrs['cid'])):
-for dual_ind in [0]:
-    radar_lst = ['uhf', 'esr']
+if comm.size > 1:
+    my_dual_inds = dual_inds[comm.rank::comm.size]
 
+data_ids = {'uhf': 0, 'esr': 1}
+radar_lst = ['uhf', 'esr']
+for dual_ind in my_dual_inds:
+    
     mids = [dual_corrs[f'mid{ind}'][dual_ind] for ind in range(len(radar_lst))]
     params = sorts.propagator.SGP4.get_TLE_parameters(
         dual_corrs['line1'][dual_ind],
@@ -303,6 +362,8 @@ for dual_ind in [0]:
             event_peak_ids.append(event_peak)
 
             break
+    iod_results['event'][dual_ind] = event_name
+    iod_results['id'][dual_ind] = dual_ind
 
     tvs = []
     states = []
@@ -465,13 +526,6 @@ for dual_ind in [0]:
 
     odlab.profiler.enable('odlab')
 
-    od_prop_sgp4 = sorts.propagator.SGP4(
-        settings=dict(
-            in_frame='TEME',
-            out_frame='ITRS',
-        )
-    )
-
     od_prop = sorts.propagator.Kepler(
         settings=dict(
             in_frame='TEME',
@@ -506,12 +560,18 @@ for dual_ind in [0]:
     state_variables = ['x', 'y', 'z', 'vx', 'vy', 'vz']
     dtype = [(name, 'float64') for name in state_variables]
 
-    kep_state_variables = ['a', 'e', 'inc', 'apo', 'raan', 'mu0']
-    kep_dtype = [(name, 'float64') for name in kep_state_variables]
+    step = np.empty((1,), dtype=dtype)
+    for ind, name in enumerate(state_variables):
+        step[name] = step_arr[ind]
+
+    # kep_state_variables = ['a', 'e', 'inc', 'apo', 'raan', 'mu0']
+    # kep_dtype = [(name, 'float64') for name in kep_state_variables]
 
     state0_named = np.empty((1,), dtype=dtype)
+    true_prior_named = np.empty((1,), dtype=dtype)
     for ind, name in enumerate(state_variables):
         state0_named[name] = orb.cartesian[ind, 0]
+        true_prior_named[name] = true_prior[ind]
 
     input_data_state = {
         'sources': sources,
@@ -537,245 +597,215 @@ for dual_ind in [0]:
         ),
     )
 
-    post_grad.run()
+    post_path = out_pth / f'lsq_results_dual_obj{dual_ind}.h5'
+    if post_path.is_file() and not clobber:
+        post_grad_results = odlab.PosteriorParameters.load_h5(post_path)
+    else:
+        post_grad.run()
+        post_grad.results.save(post_path)
+        post_grad_results = post_grad.results
+
+    mcmc_start = post_grad_results.MAP
+    post = odlab.MCMCLeastSquares(
+        data = input_data_state,
+        variables = state_variables,
+        state_variables = state_variables,
+        start = mcmc_start,
+        prior = None,
+        propagator = od_prop,
+        method = 'SCAM',
+        proposal = 'LinSigma',
+        # proposal = 'normal',
+        method_options = dict(
+            accept_max = 0.5,
+            accept_min = 0.3,
+            adapt_interval = 500,
+        ),
+        steps = steps,
+        step = step,
+        tune = 0,
+        MPI = False,
+    )
+
+    post_mcmc_path = out_pth / f'mcmc_results_dual_obj{dual_ind}.h5'
+    if post_mcmc_path.is_file() and not clobber:
+        post_results = odlab.PosteriorParameters.load_h5(post_mcmc_path)
+    else:
+        post.run()
+        post.results.save(post_mcmc_path)
+        post_results = post.results
 
     print(odlab.profiler)
 
     print(' POST GRADIENT ASCENT \n')
-    print(post_grad.results)
+    print(post_grad_results)
 
-    print('==== Start variables ====')
+    print('==== Start variables [m, m/s] ====')
     for key in state_variables:
         print(f'{key}: {state0_named[key]}')
 
-    print('==== TLE prior ====')
+    print('==== TLE prior [m, m/s] ====')
     for ind, key in enumerate(state_variables):
         print(f'{key}: {true_prior[ind]}')
 
-    print('==== IOD-stage1 result ====')
+    print('==== IOD-LSQ result [m, m/s] ====')
     for key in state_variables:
-        print(f'{key}: {post_grad.results.MAP[key]}')
+        print(f'{key}: {post_grad_results.MAP[key]}')
 
-    exit()
+    print('==== (IOD-LSQ - TLE) diff [km, km/s] ====')
+    iod_results['lsq_teme_tle_diff'][dual_ind] = np.empty_like(true_prior)
+    for ind, key in enumerate(state_variables):
+        print(f'{key}: {(post_grad_results.MAP[key] - true_prior[ind])*1e-3}')
+        iod_results['lsq_teme_tle_diff'][dual_ind][ind] = post_grad_results.MAP[key] - true_prior[ind]
 
+    print('==== IOD-MCMC result [m, m/s] ====')
+    for key in state_variables:
+        print(f'{key}: {post_results.MAP[key]}')
 
-def junk():
+    print('==== (IOD-MCMC - TLE) diff [km, km/s] ====')
+    iod_results['mcmc_teme_tle_diff'][dual_ind] = np.empty_like(true_prior)
+    for ind, key in enumerate(state_variables):
+        print(f'{key}: {(post_results.MAP[key] - true_prior[ind])*1e-3}')
+        iod_results['mcmc_teme_tle_diff'][dual_ind][ind] = post_results.MAP[key] - true_prior[ind]
 
-    odlab.profiler.enable('odlab')
-
-    # od_prop = sorts.propagator.Kepler(
-    #     settings=dict(
-    #         in_frame='TEME',
-    #         out_frame='ITRS',
-    #     )
-    # )
-    od_prop_sgp4 = sorts.propagator.SGP4(
-        settings=dict(
-            in_frame='TEME',
-            out_frame='ITRS',
-        )
+    post_grad_state = [post_results.MAP[key][0] for key in state_variables]
+    post_grad_kep_orb = pyorb.Orbit(
+        M0=pyorb.M_earth, 
+        m=0, 
+        num=1, 
+        radians=False,
+        cartesian = np.array(post_grad_state).reshape(6, 1),
+    )
+    true_prior_kep_orb = pyorb.Orbit(
+        M0=pyorb.M_earth, 
+        m=0, 
+        num=1, 
+        radians=False,
+        cartesian = true_prior.reshape(6, 1),
     )
 
-    od_prop = sorts.propagator.Kepler(
-        settings=dict(
-            in_frame='TEME',
-            out_frame='ITRS',
-        )
-    )
+    od_prop.out_frame = 'TEME'
+    prop.out_frame = 'TEME'
 
-    # orekit_data = OUTPUT / 'orekit-data-master.zip'
-    # if not orekit_data.is_file():
-    #     sorts.propagator.Orekit.download_quickstart_data(
-    #         orekit_data, verbose=True
-    #     )
-    # settings = dict(
-    #     in_frame='TEME',
-    #     out_frame='ITRS',
-    #     solar_activity_strength='WEAK',
-    #     integrator='DormandPrince853',
-    #     min_step=0.001,
-    #     max_step=240.0,
-    #     position_tolerance=20.0,
-    #     earth_gravity='HolmesFeatherstone',
-    #     gravity_order=(10, 10),
-    #     solarsystem_perturbers=['Moon', 'Sun'],
-    #     drag_force=False,
-    #     atmosphere='DTM2000',
-    #     radiation_pressure=False,
-    #     solar_activity='Marshall',
-    #     constants_source='WGS84',
-    # )
-    # od_prop = sorts.propagator.Orekit(
-    #     orekit_data=orekit_data,
-    #     settings=settings,
-    # )
-
-    source_data = []
-
-    dates = [odlab.times.mjd2npdt(_t.mjd) for _t in meas_times]
-
-    for ind, tx in enumerate(txs):
-        radar_data = np.empty((1,), dtype=odlab.sources.RadarTracklet.dtype)
-        radar_data['date'][0] = dates[ind]
-        radar_data['r'][0] = meas_r[ind]
-        radar_data['v'][0] = meas_v[ind]
-        radar_data['r_sd'][0] = r_err
-        radar_data['v_sd'][0] = v_err
-
-        source_data.append({
-            'data': radar_data,
-            'meta': dict(
-                tx_ecef = tx.ecef,
-                rx_ecef = tx.ecef,
-            ),
-            'index': 1,
-        })
-
-    pprint(source_data)
-    paths = odlab.SourcePath.from_list(source_data, 'ram')
-
-    sources = odlab.SourceCollection(paths = paths)
-    sources.details()
-
-    mean_prior, B, tle_epoch = od_prop_sgp4.get_mean_elements(
+    tle_prop = prop.get_TLE_parameters(
         dual_corrs['line1'][dual_ind], 
-        dual_corrs['line2'][dual_ind], 
-        radians=False,
+        dual_corrs['line2'][dual_ind],
+    )
+    satnum = tle_prop['satnum']
+
+    tle_states = od_prop.propagate(
+        err_t_samp,
+        true_prior_kep_orb,
+        epoch = epoch_iod,
+    )
+    iod_states = od_prop.propagate(
+        err_t_samp,
+        post_grad_kep_orb,
+        epoch = epoch_iod,
     )
 
-
-    state_variables = ['x', 'y', 'z', 'vx', 'vy', 'vz']
-    kep_state_variables = ['a', 'e', 'inc', 'apo', 'raan', 'mu0']
-    variables = state_variables
-    dtype = [(name, 'float64') for name in variables]
-    kep_dtype = [(name, 'float64') for name in kep_state_variables]
-    state0_named = np.empty((1,), dtype=dtype)
-    state1_named = np.empty((1,), dtype=kep_dtype)
-    tle0_named = np.empty((1,), dtype=kep_dtype)
-    for ind, name in enumerate(variables):
-        state0_named[name] = orb.cartesian[ind, 0]
-
-    for ind, name in enumerate(kep_state_variables):
-        tle0_named[name] = mean_prior[ind]
-
-    input_data_state = {
-        'sources': sources,
-        'Models': [odlab.RadarPair]*len(sources),
-        'date0': date0,
-        # 'date0': odlab.times.mjd2npdt(tle_epoch.mjd),
-        'params': dict(
-            # B = B,
-            M0 = pyorb.M_earth,
-            SGP4_mean_elements = True,
-        ),
-    }
-
-    print('==== Start variables ====')
-    for key in state_variables:
-        print(f'{key}: {state0_named[key]}')
-
-    post_kep = odlab.OptimizeLeastSquares(
-        data = input_data_state,
-        variables = variables,
-        state_variables = state_variables,
-        start = state0_named,
-        prior = None,
-        propagator = od_prop,
-        method = 'Nelder-Mead',
-        options = dict(
-            maxiter = 10000,
-            disp = False,
-            xatol = 1e-3,
-            # bounds = [
-            #     (None, None),
-            #     (0, 1),
-            #     (None, None),
-            #     (None, None),
-            #     (None, None),
-            #     (None, None),
-            # ]
-        ),
+    iod_pos_err = np.linalg.norm(tle_states[:3, :] - iod_states[:3, :], axis=0)
+    tle_states_itrs = sorts.frames.convert(
+        epoch_iod + TimeDelta(err_t_samp, format='sec'), 
+        tle_states, 
+        in_frame='TEME', 
+        out_frame='ITRS',
     )
+    iod_ang_errs = [
+        multi_vector_angle(
+            tle_states_itrs[:3, :] - tx.ecef[:, None],
+            sorts.frames.convert(
+                epoch_iod + TimeDelta(err_t_samp, format='sec'), 
+                iod_states, 
+                in_frame='TEME', 
+                out_frame='ITRS',
+            )[:3, :] - tx.ecef[:, None],
+        )
+        for tx in txs
+    ]
+    for txi in range(len(txs)):
+        sel = np.logical_not(txs[txi].field_of_view(tle_states_itrs))
+        iod_ang_errs[txi][sel] = np.nan
 
+    od_prop.out_frame = 'ITRS'
+    prop.out_frame = 'ITRS'
 
-    post_kep.run()
+    fig = plt.figure(figsize=(15, 15))
+    ax = fig.add_subplot(111)
+    ax.plot(err_t_samp/3600.0, iod_pos_err*1e-3, "-b")
+    ax.set_xlabel('Time past IOD epoch [h]')
+    ax.set_ylabel('Position difference [km]')
+    ax.set_title(f'Dual beampark IOD vs TLE, NORAD-ID {satnum}')
+    fig.savefig(out_pth / f'IOD_vs_TLE_pos_error_dual_obj{dual_ind}.png')
+    plt.close(fig)
 
-    print('==== TLE State ====')
-    for key, val in zip(state_variables, tle_state):
-        print(f'{key}: {val}')
+    cols = ['b', 'm']
 
+    fig = plt.figure(figsize=(15, 15))
+    ax = fig.add_subplot(111)
+    for rdi in range(len(radar_lst)):
+        ax.plot(err_t_samp/3600.0, iod_ang_errs[rdi], c=cols[rdi], label=f'From {radar_lst[rdi].upper()}')
+        ax.axhline(beam_fwhm[rdi], ls='--', c=cols[rdi], label=f'{radar_lst[rdi].upper()} FWHM')
+    ax.legend()
+    ax.set_xlabel('Time past IOD epoch [h]')
+    ax.set_ylabel('Angle difference [deg]')
+    ax.set_title(f'Dual beampark IOD vs TLE, NORAD-ID {satnum}')
+    fig.savefig(out_pth / f'IOD_vs_TLE_ang_error_dual_obj{dual_ind}.png')
+    plt.close(fig)
 
-    print(' POST KEP \n')
-    print(post_kep.results)
-
-    exit()
-
-    post_kep_orb = pyorb.Orbit(
-        M0=pyorb.M_earth, 
-        m=0, 
-        num=1, 
-        radians=False,
-        cartesian = np.array([post_kep.results.MAP[key][0] for key in state_variables]).reshape(6, 1),
+    figs, axes = odlab.plot.trace(post_results, reference=true_prior_named)
+    for ind, fig in enumerate(figs):
+        fig.savefig(out_pth / f'IOD_MCMC_trace_p{ind}_dual_obj{dual_ind}.png')
+        plt.close(fig)
+    fig, axes = odlab.plot.scatter_trace(
+        post_results, 
+        reference=true_prior_named,
+        alpha = 0.1,
+        size = 4,
     )
-    for ind, key in enumerate(kep_state_variables):
-        state1_named[key][0] = post_kep_orb.kepler[ind, 0]
+    fig.savefig(out_pth / f'IOD_MCMC_scatter_ref_dual_obj{dual_ind}.png')
+    plt.close(fig)
 
-    post = odlab.OptimizeLeastSquares(
-        data = input_data_state,
-        variables = kep_state_variables,
-        state_variables = kep_state_variables,
-        start = state1_named,
-        prior = None,
-        propagator = od_prop_sgp4,
-        method = 'Nelder-Mead',
-        options = dict(
-            maxiter = 10000,
-            disp = False,
-            xatol = 1e-3,
-            bounds = [
-                (None, None),
-                (0, 1),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-            ]
-        ),
+    fig, axes = odlab.plot.scatter_trace(
+        post_results,
+        alpha = 0.1,
     )
-    post.run()
+    fig.savefig(out_pth / f'IOD_MCMC_scatter_dual_obj{dual_ind}.png')
+    plt.close(fig)
 
+    for absolute in [True, False]:
+        figs, axes = odlab.plot.residuals(
+            post, 
+            [state0_named, post_grad_results.MAP, post_results.MAP, true_prior_named], 
+            ['IOD-start', 'IOD-LSQ-MAP', 'IOD-MCMC-MAP', 'TLE'], 
+            ['-b', '-g', '-m', '-r'], 
+            units = {'r': 'm', 'v': 'm/s'},
+            absolute=absolute,
+        )
+        for ind, fig in enumerate(figs):
+            fig.savefig(out_pth / f'IOD_{"abs_" if absolute else ""}residual_p{ind}_dual_obj{dual_ind}.png')
+            plt.close(fig)
 
-    print('==== TLE variables ====')
-    for key in kep_state_variables:
-        print(f'{key}: {tle0_named[key]}')
+    
+if comm.size > 1:
+    mpi_inds = []
+    for thr_id in range(comm.size):
+        mpi_inds.append(dual_inds[thr_id::comm.size])
 
-    print('==== Start 1 variables ====')
-    for key in kep_state_variables:
-        print(f'{key}: {state1_named[key]}')
+    if comm.rank == 0:
+        for thr_id in range(comm.size):
+            if thr_id != 0:
+                for ind in mpi_inds[thr_id]:
+                    for kind, key in enumerate(iod_results):
+                        iod_results[key][ind] = comm.recv(source=thr_id, tag=ind*10 + kind)
 
+    else:
+        for ind in mpi_inds[comm.rank]:
+            for kind, key in enumerate(iod_results):
+                comm.send(iod_results[key][ind], dest=0, tag=ind*10 + kind)
 
-    print(post.results)
+    if comm.rank != 0:
+        exit()
 
-    res_mean = np.array([post.results.MAP[key][0] for key in kep_state_variables])
-
-    od_prop.set(out_frame='TEME')
-    _state0 = od_prop_sgp4.propagate(
-        0, res_mean, epoch=tle_epoch, SGP4_mean_elements=True,
-    )
-
-    result_orb = pyorb.Orbit(
-        M0=pyorb.M_earth, 
-        m=0, 
-        num=1, 
-        radians=False,
-        cartesian = _state0.reshape(6, 1),
-        # cartesian = res_cart.reshape(6, 1),
-    )
-    print(result_orb)
-
-    # deltas = [0.1]*3 + [0.05]*3
-    # Sigma_orb = post.linear_MAP_covariance(post.results.MAP, deltas)
-    # print('Linearized MAP covariance:')
-    # print(Sigma_orb)
-
-    print(odlab.profiler)
+with open(results_data_file, 'wb') as fh:
+    pickle.dump(iod_results, fh)
