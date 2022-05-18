@@ -41,7 +41,7 @@ err_t_prop = 10*3600.0
 err_t_step = 10.0
 
 # steps = 10000
-steps = 100000
+steps = 20000
 step_arr = np.ones((6,), dtype=np.float64)*0.1
 
 err_t_samp = np.arange(0, err_t_prop, err_t_step, dtype=np.float64)
@@ -310,7 +310,8 @@ else:
 
 odlab.profiler.enable('odlab')
 
-my_dual_inds = [1]
+# my_dual_inds = [0, 1, 2]
+my_dual_inds = [0]
 print('RUNNING DEBUG MODE')
 
 data_ids = {'uhf': 0, 'esr': 1}
@@ -594,14 +595,26 @@ for dual_ind in my_dual_inds:
     sources = odlab.SourceCollection(paths = odlab_paths)
     sources.details()
 
+    cart_vars = ['x', 'y', 'z', 'vx', 'vy', 'vz']
+
     if use_propagator == 'kepler':
-        state_variables = ['x', 'y', 'z', 'vx', 'vy', 'vz']
+        state_variables = [x for x in cart_vars]
+        bounds = None
     else:
         state_variables = ['a', 'e', 'inc', 'raan', 'apo', 'mu0']
+        bounds = [
+            (0, None),
+            (0, 1),
+            (0, np.pi),
+            (-2*np.pi, np.pi*4),
+            (-2*np.pi, np.pi*4),
+            (-2*np.pi, np.pi*4),
+        ]
     dtype = [(name, 'float64') for name in state_variables]
+    cart_dtype = [(name, 'float64') for name in cart_vars]
 
-    step = np.empty((1,), dtype=dtype)
-    for ind, name in enumerate(state_variables):
+    step = np.empty((1,), dtype=cart_dtype)
+    for ind, name in enumerate(cart_vars):
         step[name] = step_arr[ind]
 
     if use_propagator == 'kepler':
@@ -654,6 +667,7 @@ for dual_ind in my_dual_inds:
             maxiter = 10000,
             disp = False,
             xatol = 1e1,
+            bounds = bounds,
         ),
     )
 
@@ -665,11 +679,34 @@ for dual_ind in my_dual_inds:
         post_grad.results.save(post_path)
         post_grad_results = post_grad.results
 
-    mcmc_start = post_grad_results.MAP
+
+    if use_propagator == 'sgp4':
+        for key in state_variables[3:]:
+            post_grad_results.MAP[key] = np.mod(post_grad_results.MAP[key] + np.pi*4, np.pi*2)
+
+    post_lsq_state = [post_grad_results.MAP[key][0] for key in state_variables]
+
+    if use_propagator == 'sgp4':
+        od_prop.out_frame = 'TEME'
+        lsq_iod_state0 = od_prop.propagate(
+            0,
+            np.array(post_lsq_state),
+            epoch = epoch_iod,
+            **params
+        )
+        od_prop.out_frame = 'ITRS'
+        mcmc_start = np.empty((1,), dtype=cart_dtype)
+        for ind, name in enumerate(cart_vars):
+            mcmc_start[name][0] = lsq_iod_state0[ind]
+
+        params['SGP4_mean_elements'] = False
+    else:
+        mcmc_start = post_grad_results.MAP
+
     post = odlab.MCMCLeastSquares(
         data = input_data_state,
-        variables = state_variables,
-        state_variables = state_variables,
+        variables = cart_vars,
+        state_variables = cart_vars,
         start = mcmc_start,
         prior = None,
         propagator = od_prop,
@@ -686,6 +723,8 @@ for dual_ind in my_dual_inds:
         tune = 0,
         MPI = False,
     )
+    post_mcmc_state = [post_results.MAP[key][0] for key in state_variables]
+    post_mcmc_state_named = post_results.MAP.copy()
 
     post_mcmc_path = out_pth / f'mcmc_results_dual_obj{dual_ind}.h5'
     if post_mcmc_path.is_file() and not clobber:
@@ -694,6 +733,17 @@ for dual_ind in my_dual_inds:
         post.run()
         post.results.save(post_mcmc_path)
         post_results = post.results
+
+    if use_propagator == 'sgp4':
+        post_mcmc_state = od_prop.TEME_to_TLE(
+            np.array(post_mcmc_state), 
+            epoch_iod,
+            t=err_t_samp, 
+            B=params['B'], 
+        )
+        post_mcmc_state[0] *= 1e3 #km -> m
+
+        params['SGP4_mean_elements'] = True
 
     print(odlab.profiler)
 
@@ -720,15 +770,13 @@ for dual_ind in my_dual_inds:
 
     print(f'==== IOD-MCMC result {units_str} ====')
     for key in state_variables:
-        print(f'{key}: {post_results.MAP[key]}')
+        print(f'{key}: {post_mcmc_state_named[key]}')
 
     print(f'==== (IOD-MCMC - TLE) diff {units_str} ====')
     iod_results['mcmc_teme_tle_diff'][dual_ind] = np.empty_like(true_prior)
     for ind, key in enumerate(state_variables):
-        print(f'{key}: {post_results.MAP[key] - true_prior[ind]}')
-        iod_results['mcmc_teme_tle_diff'][dual_ind][ind] = post_results.MAP[key] - true_prior[ind]
-
-    post_grad_state = [post_results.MAP[key][0] for key in state_variables]
+        print(f'{key}: {post_mcmc_state_named[key] - true_prior[ind]}')
+        iod_results['mcmc_teme_tle_diff'][dual_ind][ind] = post_mcmc_state_named[key] - true_prior[ind]
 
     od_prop.out_frame = 'TEME'
     prop.out_frame = 'TEME'
@@ -752,7 +800,7 @@ for dual_ind in my_dual_inds:
             m=0, 
             num=1, 
             radians=False,
-            cartesian = np.array(post_grad_state).reshape(6, 1),
+            cartesian = np.array(post_mcmc_state).reshape(6, 1),
         )
         tle_states = od_prop.propagate(
             err_t_samp,
@@ -767,18 +815,26 @@ for dual_ind in my_dual_inds:
     else:
         tle_states = od_prop.propagate(
             err_t_samp,
-            np.array(post_grad_state),
+            true_prior,
             epoch = epoch_iod,
             **params
         )
         iod_states = od_prop.propagate(
             err_t_samp,
-            true_prior,
+            np.array(post_mcmc_state),
+            epoch = epoch_iod,
+            **params
+        )
+        lsq_iod_states = od_prop.propagate(
+            err_t_samp,
+            np.array(post_lsq_state),
             epoch = epoch_iod,
             **params
         )
 
+
     iod_pos_err = np.linalg.norm(tle_states[:3, :] - iod_states[:3, :], axis=0)
+    lsq_iod_pos_err = np.linalg.norm(tle_states[:3, :] - lsq_iod_states[:3, :], axis=0)
     tle_states_itrs = sorts.frames.convert(
         epoch_iod + TimeDelta(err_t_samp, format='sec'), 
         tle_states, 
@@ -791,6 +847,12 @@ for dual_ind in my_dual_inds:
         in_frame='TEME', 
         out_frame='ITRS',
     )
+    lsq_iod_states_itrs = sorts.frames.convert(
+        epoch_iod + TimeDelta(err_t_samp, format='sec'), 
+        lsq_iod_states, 
+        in_frame='TEME', 
+        out_frame='ITRS',
+    )
     iod_ang_errs = [
         multi_vector_angle(
             tle_states_itrs[:3, :] - tx.ecef[:, None],
@@ -798,11 +860,21 @@ for dual_ind in my_dual_inds:
         )
         for tx in txs
     ]
+    lsq_iod_ang_errs = [
+        multi_vector_angle(
+            tle_states_itrs[:3, :] - tx.ecef[:, None],
+            lsq_iod_states_itrs[:3, :] - tx.ecef[:, None],
+        )
+        for tx in txs
+    ]
     iod_rv = []
     tle_orb_rv = []
     for txi in range(len(txs)):
-        sel = np.logical_not(txs[txi].field_of_view(tle_states_itrs))
+        sel = np.logical_not(txs[txi].field_of_view(iod_states_itrs))
         iod_ang_errs[txi][sel] = np.nan
+        sel = np.logical_not(txs[txi].field_of_view(lsq_iod_states_itrs))
+        lsq_iod_ang_errs[txi][sel] = np.nan
+
 
         if use_propagator == 'kepler':
             tle_states_meas = od_prop.propagate(
@@ -824,7 +896,7 @@ for dual_ind in my_dual_inds:
             )
             iod_states_meas = od_prop.propagate(
                 (meas_t[txi] - epoch_iod).sec,
-                np.array(post_grad_state),
+                np.array(post_mcmc_state),
                 epoch = epoch_iod,
                 **params
             )
@@ -889,7 +961,9 @@ for dual_ind in my_dual_inds:
 
     fig = plt.figure(figsize=(15, 15))
     ax = fig.add_subplot(111)
-    ax.plot(err_t_samp/3600.0, iod_pos_err*1e-3, "-b")
+    ax.plot(err_t_samp/3600.0, iod_pos_err*1e-3, "-b", label='IOD-MCMC')
+    ax.plot(err_t_samp/3600.0, lsq_iod_pos_err*1e-3, "-b", label='IOD-LSQ')
+    ax.legend()
     ax.set_xlabel('Time past IOD epoch [h]')
     ax.set_ylabel('Position difference [km]')
     ax.set_title(f'Dual beampark IOD vs TLE, NORAD-ID {satnum}')
@@ -901,7 +975,8 @@ for dual_ind in my_dual_inds:
     fig = plt.figure(figsize=(15, 15))
     ax = fig.add_subplot(111)
     for rdi in range(len(radar_lst)):
-        ax.plot(err_t_samp/3600.0, iod_ang_errs[rdi], c=cols[rdi], label=f'From {radar_lst[rdi].upper()}')
+        ax.plot(err_t_samp/3600.0, iod_ang_errs[rdi], c=cols[rdi], label=f'From {radar_lst[rdi].upper()} IOD-MCMC')
+        ax.plot(err_t_samp/3600.0, lsq_iod_ang_errs[rdi], '--', c=cols[rdi], label=f'From {radar_lst[rdi].upper()} IOD-LSQ')
         ax.axhline(beam_fwhm[rdi], ls='--', c=cols[rdi], label=f'{radar_lst[rdi].upper()} FWHM')
     ax.legend()
     ax.set_xlabel('Time past IOD epoch [h]')
@@ -910,10 +985,13 @@ for dual_ind in my_dual_inds:
     fig.savefig(out_pth / f'IOD_vs_TLE_ang_error_dual_obj{dual_ind}.png')
     plt.close(fig)
 
-    figs, axes = odlab.plot.trace(post_results, reference=true_prior_named)
-    for ind, fig in enumerate(figs):
-        fig.savefig(out_pth / f'IOD_MCMC_trace_p{ind}_dual_obj{dual_ind}.png')
-        plt.close(fig)
+    if use_propagator == 'kepler':
+        figs, axes = odlab.plot.trace(post_results, reference=true_prior_named)
+        for ind, fig in enumerate(figs):
+            fig.savefig(out_pth / f'IOD_MCMC_trace_p{ind}_dual_obj{dual_ind}.png')
+            plt.close(fig)
+    print('fix this by making a proper tru prior named')
+    
     fig, axes = odlab.plot.scatter_trace(
         post_results, 
         reference=true_prior_named,
@@ -933,7 +1011,7 @@ for dual_ind in my_dual_inds:
     for absolute in [True, False]:
         figs, axes = odlab.plot.residuals(
             post, 
-            [state0_named, post_grad_results.MAP, post_results.MAP, true_prior_named], 
+            [state0_named, post_grad_results.MAP, post_mcmc_state_named, true_prior_named], 
             ['IOD-start', 'IOD-LSQ-MAP', 'IOD-MCMC-MAP', 'TLE'], 
             ['-b', '-g', '-m', '-r'], 
             units = {'r': 'm', 'v': 'm/s'},
