@@ -48,7 +48,7 @@ HERE = Path(__file__).parent.resolve()
 OUTPUT = HERE / 'output' / 'russian_asat'
 print(f'Using {OUTPUT} as output')
 
-out_pth = OUTPUT / 'orbit_determination'
+out_pth = OUTPUT / 'orbit_determination_v2'
 out_pth.mkdir(exist_ok=True)
 
 results_data_file = out_pth / 'iod_results.pickle'
@@ -256,7 +256,6 @@ txs = [
 dual_inds = list(range(len(dual_corrs['cid'])))
 iod_results = {
     'id': [None for ind in dual_inds],
-    'event': [None for ind in dual_inds],
     'mcmc_teme_tle_diff': [None for ind in dual_inds],
     'lsq_teme_tle_diff': [None for ind in dual_inds],
 }
@@ -305,14 +304,16 @@ if comm.size > 1:
 else:
     my_dual_inds = dual_inds
 
-# my_dual_inds = [0]
+# my_dual_inds = [1]
 # print('RUNNING DEBUG MODE')
 
 data_ids = {'uhf': 0, 'esr': 1}
 radar_lst = ['uhf', 'esr']
 for dual_ind in my_dual_inds:
+    iod_results['id'][dual_ind] = dual_ind
     
     mids = [dual_corrs[f'mid{ind}'][dual_ind] for ind in range(len(radar_lst))]
+    print('Using MIDs: ', {key: mid for key, mid in zip(radar_lst, mids)})
     params = sorts.propagator.SGP4.get_TLE_parameters(
         dual_corrs['line1'][dual_ind],
         dual_corrs['line2'][dual_ind],
@@ -322,6 +323,7 @@ for dual_ind in my_dual_inds:
 
     for radar in radar_lst:
         data_file = paths['data_paths'][radar][data_ids[radar]]
+        print('Loading summary from: ', data_file)
         data = load_data(data_file)
         datas.append(data)
 
@@ -329,6 +331,7 @@ for dual_ind in my_dual_inds:
     for ind, (tx, dat, mid) in enumerate(zip(txs, datas, mids)):
         meas_times.append(dat['times'][mid])
 
+    print('meas_times: ', [x.iso for x in meas_times])
     class fake_args:
         v = 0
 
@@ -348,6 +351,7 @@ for dual_ind in my_dual_inds:
             t0 = Time(ext_data['t'], format='unix', scale='utc')
             _dt = np.abs((t0 - meas_times[rdi]).sec)
             _match_ind = np.argmin(_dt)
+            print('_dt check: ', np.sort(_dt)[:2])
             event_name = ext_data.iloc[_match_ind]['event_name']
             event_names.append(event_name)
             print(f'matched event (ind={_match_ind}): dt={_dt[_match_ind]} for {event_name}')
@@ -367,8 +371,6 @@ for dual_ind in my_dual_inds:
             event_peak_ids.append(event_peak)
 
             break
-    iod_results['event'][dual_ind] = event_name
-    iod_results['id'][dual_ind] = dual_ind
 
     tvs = []
     states = []
@@ -422,38 +424,8 @@ for dual_ind in my_dual_inds:
         print('r-err [m  ]: ', meas_r[ind] - sim_r[ind])
         print('v-err [m/s]: ', meas_v[ind] - sim_v[ind])
 
-    fig, axes = plt.subplots(2, 2, figsize=(15, 15))
-    axes[0, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, meas_r[0]*1e-3, 'r', label='Measurement')
-    axes[0, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, sim_r[0]*1e-3, 'b', label='TLE')
-    axes[0, 0].set_xlabel('Time past epoch [h]')
-    axes[0, 0].set_ylabel('Range [km]')
-    axes[0, 0].set_title(radar_lst[0])
-    axes[0, 0].legend()
-
-    axes[1, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, meas_v[0]*1e-3, 'r')
-    axes[1, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, sim_v[0]*1e-3, 'b')
-    axes[1, 0].set_xlabel('Time past epoch [h]')
-    axes[1, 0].set_ylabel('Doppler [km/s]')
-    axes[1, 0].set_title(radar_lst[0])
-    
-    axes[0, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, meas_r[1]*1e-3, 'r')
-    axes[0, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, sim_r[1]*1e-3, 'b')
-    axes[0, 1].set_xlabel('Time past epoch [h]')
-    axes[0, 1].set_ylabel('Range [km]')
-    axes[0, 1].set_title(radar_lst[1])
-
-    axes[1, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, meas_v[1]*1e-3, 'r')
-    axes[1, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, sim_v[1]*1e-3, 'b')
-    axes[1, 1].set_xlabel('Time past epoch [h]')
-    axes[1, 1].set_ylabel('Doppler [km/s]')
-    axes[1, 1].set_title(radar_lst[1])
-
-    sup_tit = ''
-    for ind in range(len(radar_lst)):
-        sup_tit += f'Correlation {radar_lst[ind]}: r-err [m  ]: {-0.5*dual_corrs[f"dr{ind}"][dual_ind]}, '
-        sup_tit += f'v-err [m/s]: {-0.5*dual_corrs[f"dv{ind}"][dual_ind]}\n'
-    fig.suptitle(sup_tit)
-    fig.savefig(out_pth / f'MEAS_vs_TLE_dual_obj{dual_ind}.png')
+        if np.abs(meas_r0[ind] - sim_r[ind][event_peak_ids[ind]] + 0.5*dual_corrs[f'dr{ind}'][dual_ind]) > 1e3:
+            print('Not same event found, ERROR')
 
     pos_vecs = []
     for ind, radar in enumerate(radar_lst):
@@ -734,24 +706,93 @@ for dual_ind in my_dual_inds:
         in_frame='TEME', 
         out_frame='ITRS',
     )
+    iod_states_itrs = sorts.frames.convert(
+        epoch_iod + TimeDelta(err_t_samp, format='sec'), 
+        iod_states, 
+        in_frame='TEME', 
+        out_frame='ITRS',
+    )
     iod_ang_errs = [
         multi_vector_angle(
             tle_states_itrs[:3, :] - tx.ecef[:, None],
-            sorts.frames.convert(
-                epoch_iod + TimeDelta(err_t_samp, format='sec'), 
-                iod_states, 
-                in_frame='TEME', 
-                out_frame='ITRS',
-            )[:3, :] - tx.ecef[:, None],
+            iod_states_itrs[:3, :] - tx.ecef[:, None],
         )
         for tx in txs
     ]
+    iod_rv = []
+    tle_orb_rv = []
     for txi in range(len(txs)):
         sel = np.logical_not(txs[txi].field_of_view(tle_states_itrs))
         iod_ang_errs[txi][sel] = np.nan
 
+        tle_states_meas = od_prop.propagate(
+            (meas_t[txi] - epoch_iod).sec,
+            true_prior_kep_orb,
+            epoch = epoch_iod,
+        )
+        iod_states_meas = od_prop.propagate(
+            (meas_t[txi] - epoch_iod).sec,
+            post_grad_kep_orb,
+            epoch = epoch_iod,
+        )
+        tle_states_itrs_meas = sorts.frames.convert(
+            meas_t[txi], 
+            tle_states_meas, 
+            in_frame='TEME', 
+            out_frame='ITRS',
+        )
+        iod_states_itrs_meas = sorts.frames.convert(
+            meas_t[txi], 
+            iod_states_meas, 
+            in_frame='TEME', 
+            out_frame='ITRS',
+        )
+        iod_rv.append(get_range_and_range_rate(txs[txi], iod_states_itrs_meas))
+        tle_orb_rv.append(get_range_and_range_rate(txs[txi], tle_states_itrs_meas))
+
     od_prop.out_frame = 'ITRS'
     prop.out_frame = 'ITRS'
+
+    fig, axes = plt.subplots(2, 2, figsize=(15, 15))
+    axes[0, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, meas_r[0]*1e-3, 'r', label='Measurement')
+    axes[0, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, sim_r[0]*1e-3, 'b', label='TLE')
+    axes[0, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, iod_rv[0][0]*1e-3, 'g', label='IOD-MCMC')
+    axes[0, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, tle_orb_rv[0][0]*1e-3, '--c', label='TLE-Prior')
+    axes[0, 0].set_xlabel('Time past epoch [h]')
+    axes[0, 0].set_ylabel('Range [km]')
+    axes[0, 0].set_title(radar_lst[0])
+    axes[0, 0].legend()
+
+    axes[1, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, meas_v[0]*1e-3, 'r')
+    axes[1, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, sim_v[0]*1e-3, 'b')
+    axes[1, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, iod_rv[0][1]*1e-3, 'g')
+    axes[1, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, tle_orb_rv[0][1]*1e-3, '--c')
+    axes[1, 0].set_xlabel('Time past epoch [h]')
+    axes[1, 0].set_ylabel('Doppler [km/s]')
+    axes[1, 0].set_title(radar_lst[0])
+    
+    axes[0, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, meas_r[1]*1e-3, 'r')
+    axes[0, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, sim_r[1]*1e-3, 'b')
+    axes[0, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, iod_rv[1][0]*1e-3, 'g')
+    axes[0, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, tle_orb_rv[1][0]*1e-3, '--c')
+    axes[0, 1].set_xlabel('Time past epoch [h]')
+    axes[0, 1].set_ylabel('Range [km]')
+    axes[0, 1].set_title(radar_lst[1])
+
+    axes[1, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, meas_v[1]*1e-3, 'r')
+    axes[1, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, sim_v[1]*1e-3, 'b')
+    axes[1, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, iod_rv[1][1]*1e-3, 'g')
+    axes[1, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, tle_orb_rv[1][1]*1e-3, '--c')
+    axes[1, 1].set_xlabel('Time past epoch [h]')
+    axes[1, 1].set_ylabel('Doppler [km/s]')
+    axes[1, 1].set_title(radar_lst[1])
+
+    sup_tit = ''
+    for ind in range(len(radar_lst)):
+        sup_tit += f'Correlation {radar_lst[ind]}: r-err [m  ]: {-0.5*dual_corrs[f"dr{ind}"][dual_ind]}, '
+        sup_tit += f'v-err [m/s]: {-0.5*dual_corrs[f"dv{ind}"][dual_ind]}\n'
+    fig.suptitle(sup_tit)
+    fig.savefig(out_pth / f'MEAS_vs_TLE_dual_obj{dual_ind}.png')
 
     fig = plt.figure(figsize=(15, 15))
     ax = fig.add_subplot(111)

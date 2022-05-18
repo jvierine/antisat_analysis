@@ -94,7 +94,7 @@ def vector_diff_metric(t, r, v, r_ref, v_ref, **kwargs):
     return ret
 
 
-def save_correlation_data(output_pth, indices, metric, correlation_data, meta=None, save_states=False):
+def save_correlation_data(output_pth, indices, metric, correlation_data, measurements, meta=None, save_states=False):
     print(f'Saving correlation data to {output_pth}')
     with h5py.File(output_pth, 'w') as ds:
 
@@ -147,8 +147,10 @@ def save_correlation_data(output_pth, indices, metric, correlation_data, meta=No
 
         scales = [ds_mch_ind, ds_obs_ind]
 
+        
         _create_ia_var(ds, 'matched_object_index', 'Index of the correlated object', indices, scales)
         _create_ia_var(ds, 'matched_object_metric', 'Correlation metric for the correlated object', metric, scales)
+        _create_ia_var(ds, 'matched_object_time', 'Time of correlation', measurements[0]['times'].unix, [ds_obs_ind], units='unix')
 
         # We currently only supply one dat dict to the correlator
         measurement_set_index = 0
@@ -260,9 +262,9 @@ def main(input_args=None):
                 r = r[inds]
                 v = v[inds]
 
-                t = Time(t, format='unix', scale='utc')
-                epoch = t[0]
-                t = (t - epoch).sec
+                times = Time(t, format='unix', scale='utc')
+                epoch = times[0]
+                t = (times - epoch).sec
 
                 # ########################
                 # 
@@ -276,6 +278,7 @@ def main(input_args=None):
                     'r': r*2,  # two way
                     'v': v*2,  # two way
                     't': t,
+                    'times': times,
                     'epoch': epoch,
                     'tx': radar.tx[0],
                     'rx': radar.rx[0],
@@ -335,6 +338,7 @@ def main(input_args=None):
                 indices, 
                 metric, 
                 correlation_data, 
+                measurements, 
                 meta = dict(
                     radar_name = args.radar,
                     tx_lat = radar.tx[0].lat,

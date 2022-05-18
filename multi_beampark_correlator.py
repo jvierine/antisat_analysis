@@ -28,6 +28,14 @@ python multi_beampark_correlator.py \
     /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_uhf_correlation_plots/eiscat_uhf_selected_correlations.npy \
     /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_esr_correlation.pickle \
     /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_esr_correlation_plots/eiscat_esr_selected_correlations.npy
+
+python multi_beampark_correlator.py \
+    /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021_11_23_spacetrack.tle \
+    -o /home/danielk/git/antisat_analysis/projects/output/russian_asat/orbit_determination/2021-11-23_dual_correlations_v2.npy \
+    /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_uhf_correlation_v2.pickle \
+    /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_uhf_correlation_plots_v2/eiscat_uhf_selected_correlations.npy \
+    /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_esr_correlation_v2.pickle \
+    /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_esr_correlation_plots_v2/eiscat_esr_selected_correlations.npy
 '''
 
 
@@ -67,6 +75,7 @@ def main(input_args=None):
         with h5py.File(input_pth, 'r') as ds:
             indecies = ds['matched_object_index'][()]
             results = ds['matched_object_metric'][()]
+            unix_times = ds['matched_object_time'][()]
             name = ds.attrs['radar_name']
 
         select = np.load(select_pth)
@@ -77,25 +86,29 @@ def main(input_args=None):
         match_data[ind] = {
             'match': indecies[0, :], 
             'metric': results[0, :],
+            'times': unix_times,
             'correlated': select,
         }
 
         for oid in np.unique(match_data[ind]['match']):
-            indecies = np.where(match_data[ind]['match'] == oid)[0]
+            indecies = np.where(np.logical_and(
+                match_data[ind]['match'] == oid,
+                match_data[ind]['correlated'],
+            ))[0]
+            if indecies.size == 0:
+                continue
 
             if oid not in objects:
                 objects[oid] = {
                     'beampark': [ind], 
                     'measurement_id': [indecies],
-                    'num': 0,
-                    'total_num': 1,
+                    'measurement_time': [unix_times[indecies]],
+                    'num': 1,
                 }
             else:
                 objects[oid]['beampark'].append(ind)
                 objects[oid]['measurement_id'].append(indecies)
-                objects[oid]['total_num'] += 1
-
-            if np.any(match_data[ind]['correlated'][indecies]):
+                objects[oid]['measurement_time'].append(unix_times[indecies])
                 objects[oid]['num'] += 1
     
 
@@ -103,6 +116,7 @@ def main(input_args=None):
     multi_match_oids = []
     multi_match_mids = []
     multi_match_datas = []
+    multi_match_times = []
     for oid, bp in objects.items():
         # skip all objects only seen in one beampark
         if bp['num'] < 2:
@@ -117,15 +131,21 @@ def main(input_args=None):
         multi_match_oids.append(oid)
 
         match_datas = {}
+        match_times = {}
         for index in range(bp['num']):
             match = get_matches(match_data, bp, index)
             ID = bp['beampark'][index]
-            match_datas[ID] = match
+            match_datas[ID] = match[0] # Assume only one
 
-            print(f'Catalog-index (oid) - {oid:<6}: Beampark-{ID} -> \
+            # Assume only one
+            _t = Time(bp["measurement_time"][index][0], format='unix')
+            match_times[ID] = _t
+
+            print(f'Catalog-index (oid) - {oid:<6}: Beampark-{ID} @ {_t.iso} -> \
                 residuals=({match["dr"][0]: .3e} m, {match["dv"][0]: .3e} m/s) -> \
                 combined={match["metric"][0]:.3e}')
         multi_match_datas.append(match_datas)
+        multi_match_times.append(match_times)
 
         possible_multi += 1
 
@@ -159,6 +179,7 @@ def main(input_args=None):
     _data_m['cid'] = multi_match_oids
     for ind in range(len(input_pths)):
         _data_m[f'mid{ind}'] = multi_match_mids[:, ind]
+        print(f'mid{ind}=', multi_match_mids[:, ind])
     for key in get_fields:
         _data_m[key] = _data[key]
     for dind, match_datas in enumerate(multi_match_datas):
@@ -169,6 +190,9 @@ def main(input_args=None):
             _data_m[f'jitter{index}'][dind] = mdata['jitter_index']
 
     if len(args.output) > 0:
+        output = pathlib.Path(args.output)
+        if not output.parent.is_dir():
+            output.parent.mkdir(exist_ok=True, parents=True)
         np.save(args.output, _data_m)
 
     print(tabulate(_data_m, headers=[f'MID-{ind}' for ind in range(len(input_pths))] + ['OID', 'NORAD-ID', 'mjd0', 'line1', 'line2']))
