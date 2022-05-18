@@ -33,11 +33,15 @@ import pyorb
 import pyant
 
 clobber = False
+use_propagator = 'sgp4'
+# use_propagator = 'kepler'
+
 
 err_t_prop = 10*3600.0
 err_t_step = 10.0
 
-steps = 10000
+# steps = 10000
+steps = 100000
 step_arr = np.ones((6,), dtype=np.float64)*0.1
 
 err_t_samp = np.arange(0, err_t_prop, err_t_step, dtype=np.float64)
@@ -304,8 +308,10 @@ if comm.size > 1:
 else:
     my_dual_inds = dual_inds
 
-# my_dual_inds = [1]
-# print('RUNNING DEBUG MODE')
+odlab.profiler.enable('odlab')
+
+my_dual_inds = [1]
+print('RUNNING DEBUG MODE')
 
 data_ids = {'uhf': 0, 'esr': 1}
 radar_lst = ['uhf', 'esr']
@@ -513,20 +519,56 @@ for dual_ind in my_dual_inds:
         print('r-err [m  ]: ', meas_r[ind] - r_s)
         print('v-err [m/s]: ', meas_v[ind] - v_s)
 
-    prop.set(out_frame='TEME')
-    true_prior = prop.propagate(
-        (epoch_iod - epoch0).sec, [dual_corrs['line1'][dual_ind], dual_corrs['line2'][dual_ind]],
-    )
-    prop.set(out_frame='ITRS')
-
-    odlab.profiler.enable('odlab')
-
-    od_prop = sorts.propagator.Kepler(
+    kep_prop = sorts.propagator.Kepler(
         settings=dict(
             in_frame='TEME',
-            out_frame='ITRS',
+            out_frame='TEME',
         )
     )
+
+    if use_propagator == 'kepler':
+        params = dict(
+            M0 = pyorb.M_earth,
+        )
+        prop.set(out_frame='TEME')
+        true_prior = prop.propagate(
+            (epoch_iod - epoch0).sec, [dual_corrs['line1'][dual_ind], dual_corrs['line2'][dual_ind]],
+        )
+        prop.set(out_frame='ITRS')
+
+        od_prop = sorts.propagator.Kepler(
+            settings=dict(
+                in_frame='TEME',
+                out_frame='ITRS',
+            )
+        )
+    else:
+        params = dict(
+            B = 0.5*2.3*10**(-0.5),
+            SGP4_mean_elements = True,
+            radians =  True,
+        )
+        prop.set(out_frame='TEME')
+        err_t_samp_fit = err_t_samp.tolist() + [(epoch_iod - epoch0).sec]
+        err_t_samp_fit = np.sort(np.array(err_t_samp_fit))
+        true_prior_states = prop.propagate(
+            err_t_samp_fit, [dual_corrs['line1'][dual_ind], dual_corrs['line2'][dual_ind]],
+        )
+        prop.set(out_frame='ITRS')
+        true_prior = prop.TEME_to_TLE_OPTIM(
+            true_prior_states, 
+            epoch_iod,
+            t=err_t_samp_fit - (epoch_iod - epoch0).sec, 
+            B=params['B'], 
+        )
+        true_prior[0] *= 1e3 #km -> m
+
+        od_prop = sorts.propagator.SGP4(
+            settings=dict(
+                in_frame='TEME',
+                out_frame='ITRS',
+            )
+        )
 
     source_data = []
     for ind, tx in enumerate(txs):
@@ -552,30 +594,53 @@ for dual_ind in my_dual_inds:
     sources = odlab.SourceCollection(paths = odlab_paths)
     sources.details()
 
-    state_variables = ['x', 'y', 'z', 'vx', 'vy', 'vz']
+    if use_propagator == 'kepler':
+        state_variables = ['x', 'y', 'z', 'vx', 'vy', 'vz']
+    else:
+        state_variables = ['a', 'e', 'inc', 'raan', 'apo', 'mu0']
     dtype = [(name, 'float64') for name in state_variables]
 
     step = np.empty((1,), dtype=dtype)
     for ind, name in enumerate(state_variables):
         step[name] = step_arr[ind]
 
-    # kep_state_variables = ['a', 'e', 'inc', 'apo', 'raan', 'mu0']
-    # kep_dtype = [(name, 'float64') for name in kep_state_variables]
+    if use_propagator == 'kepler':
+        state0 = orb.cartesian[:, 0]
+    else:
+        iod_start_states = kep_prop.propagate(err_t_samp, orb, epoch=epoch_iod)
+        state0 = od_prop.TEME_to_TLE_OPTIM(
+            iod_start_states, 
+            epoch_iod,
+            t=err_t_samp, 
+            B=params['B'], 
+        )
+        state0[0] *= 1e3 #km -> m
 
     state0_named = np.empty((1,), dtype=dtype)
     true_prior_named = np.empty((1,), dtype=dtype)
     for ind, name in enumerate(state_variables):
-        state0_named[name] = orb.cartesian[ind, 0]
+        state0_named[name] = state0[ind]
         true_prior_named[name] = true_prior[ind]
 
     input_data_state = {
         'sources': sources,
         'Models': [odlab.RadarPair]*len(sources),
         'date0': date0,
-        'params': dict(
-            M0 = pyorb.M_earth,
-        ),
+        'params': params,
     }
+
+    if use_propagator == 'kepler':
+        units_str = '[m, m/s]'
+    else:
+        units_str = '[m, rad]'
+
+    print(f'==== Start variables {units_str} ====')
+    for key in state_variables:
+        print(f'{key}: {state0_named[key]}')
+
+    print(f'==== TLE prior {units_str} ====')
+    for ind, key in enumerate(state_variables):
+        print(f'{key}: {true_prior[ind]}')
 
     post_grad = odlab.OptimizeLeastSquares(
         data = input_data_state,
@@ -635,49 +700,35 @@ for dual_ind in my_dual_inds:
     print(' POST GRADIENT ASCENT \n')
     print(post_grad_results)
 
-    print('==== Start variables [m, m/s] ====')
+    print(f'==== Start variables {units_str} ====')
     for key in state_variables:
         print(f'{key}: {state0_named[key]}')
 
-    print('==== TLE prior [m, m/s] ====')
+    print(f'==== TLE prior {units_str} ====')
     for ind, key in enumerate(state_variables):
         print(f'{key}: {true_prior[ind]}')
 
-    print('==== IOD-LSQ result [m, m/s] ====')
+    print(f'==== IOD-LSQ result {units_str} ====')
     for key in state_variables:
         print(f'{key}: {post_grad_results.MAP[key]}')
 
-    print('==== (IOD-LSQ - TLE) diff [km, km/s] ====')
+    print(f'==== (IOD-LSQ - TLE) diff {units_str} ====')
     iod_results['lsq_teme_tle_diff'][dual_ind] = np.empty_like(true_prior)
     for ind, key in enumerate(state_variables):
-        print(f'{key}: {(post_grad_results.MAP[key] - true_prior[ind])*1e-3}')
+        print(f'{key}: {post_grad_results.MAP[key] - true_prior[ind]}')
         iod_results['lsq_teme_tle_diff'][dual_ind][ind] = post_grad_results.MAP[key] - true_prior[ind]
 
-    print('==== IOD-MCMC result [m, m/s] ====')
+    print(f'==== IOD-MCMC result {units_str} ====')
     for key in state_variables:
         print(f'{key}: {post_results.MAP[key]}')
 
-    print('==== (IOD-MCMC - TLE) diff [km, km/s] ====')
+    print(f'==== (IOD-MCMC - TLE) diff {units_str} ====')
     iod_results['mcmc_teme_tle_diff'][dual_ind] = np.empty_like(true_prior)
     for ind, key in enumerate(state_variables):
-        print(f'{key}: {(post_results.MAP[key] - true_prior[ind])*1e-3}')
+        print(f'{key}: {post_results.MAP[key] - true_prior[ind]}')
         iod_results['mcmc_teme_tle_diff'][dual_ind][ind] = post_results.MAP[key] - true_prior[ind]
 
     post_grad_state = [post_results.MAP[key][0] for key in state_variables]
-    post_grad_kep_orb = pyorb.Orbit(
-        M0=pyorb.M_earth, 
-        m=0, 
-        num=1, 
-        radians=False,
-        cartesian = np.array(post_grad_state).reshape(6, 1),
-    )
-    true_prior_kep_orb = pyorb.Orbit(
-        M0=pyorb.M_earth, 
-        m=0, 
-        num=1, 
-        radians=False,
-        cartesian = true_prior.reshape(6, 1),
-    )
 
     od_prop.out_frame = 'TEME'
     prop.out_frame = 'TEME'
@@ -688,16 +739,44 @@ for dual_ind in my_dual_inds:
     )
     satnum = tle_prop['satnum']
 
-    tle_states = od_prop.propagate(
-        err_t_samp,
-        true_prior_kep_orb,
-        epoch = epoch_iod,
-    )
-    iod_states = od_prop.propagate(
-        err_t_samp,
-        post_grad_kep_orb,
-        epoch = epoch_iod,
-    )
+    if use_propagator == 'kepler':
+        true_prior_kep_orb = pyorb.Orbit(
+            M0=pyorb.M_earth, 
+            m=0, 
+            num=1, 
+            radians=False,
+            cartesian = true_prior.reshape(6, 1),
+        )
+        post_grad_kep_orb = pyorb.Orbit(
+            M0=pyorb.M_earth, 
+            m=0, 
+            num=1, 
+            radians=False,
+            cartesian = np.array(post_grad_state).reshape(6, 1),
+        )
+        tle_states = od_prop.propagate(
+            err_t_samp,
+            true_prior_kep_orb,
+            epoch = epoch_iod,
+        )
+        iod_states = od_prop.propagate(
+            err_t_samp,
+            post_grad_kep_orb,
+            epoch = epoch_iod,
+        )
+    else:
+        tle_states = od_prop.propagate(
+            err_t_samp,
+            np.array(post_grad_state),
+            epoch = epoch_iod,
+            **params
+        )
+        iod_states = od_prop.propagate(
+            err_t_samp,
+            true_prior,
+            epoch = epoch_iod,
+            **params
+        )
 
     iod_pos_err = np.linalg.norm(tle_states[:3, :] - iod_states[:3, :], axis=0)
     tle_states_itrs = sorts.frames.convert(
@@ -725,16 +804,30 @@ for dual_ind in my_dual_inds:
         sel = np.logical_not(txs[txi].field_of_view(tle_states_itrs))
         iod_ang_errs[txi][sel] = np.nan
 
-        tle_states_meas = od_prop.propagate(
-            (meas_t[txi] - epoch_iod).sec,
-            true_prior_kep_orb,
-            epoch = epoch_iod,
-        )
-        iod_states_meas = od_prop.propagate(
-            (meas_t[txi] - epoch_iod).sec,
-            post_grad_kep_orb,
-            epoch = epoch_iod,
-        )
+        if use_propagator == 'kepler':
+            tle_states_meas = od_prop.propagate(
+                (meas_t[txi] - epoch_iod).sec,
+                true_prior_kep_orb,
+                epoch = epoch_iod,
+            )
+            iod_states_meas = od_prop.propagate(
+                (meas_t[txi] - epoch_iod).sec,
+                post_grad_kep_orb,
+                epoch = epoch_iod,
+            )
+        else:
+            tle_states_meas = od_prop.propagate(
+                (meas_t[txi] - epoch_iod).sec,
+                true_prior,
+                epoch = epoch_iod,
+                **params
+            )
+            iod_states_meas = od_prop.propagate(
+                (meas_t[txi] - epoch_iod).sec,
+                np.array(post_grad_state),
+                epoch = epoch_iod,
+                **params
+            )
         tle_states_itrs_meas = sorts.frames.convert(
             meas_t[txi], 
             tle_states_meas, 
