@@ -547,7 +547,7 @@ for dual_ind in my_dual_inds:
         params = dict(
             B = 0.5*2.3*10**(-0.5),
             SGP4_mean_elements = True,
-            radians =  True,
+            radians = True,
         )
         prop.set(out_frame='TEME')
         err_t_samp_fit = err_t_samp.tolist() + [(epoch_iod - epoch0).sec]
@@ -586,7 +586,7 @@ for dual_ind in my_dual_inds:
                 tx_ecef = tx.ecef,
                 rx_ecef = tx.ecef,
             ),
-            'index': 1,
+            'index': dual_ind,
         })
 
     # pprint(source_data)
@@ -642,14 +642,15 @@ for dual_ind in my_dual_inds:
         'params': params,
     }
 
+    units_str_cart = '[m, m/s]'
     if use_propagator == 'kepler':
-        units_str = '[m, m/s]'
+        units_str = units_str_cart
     else:
         units_str = '[m, rad]'
 
     print(f'==== Start variables {units_str} ====')
     for key in state_variables:
-        print(f'{key}: {state0_named[key]}')
+        print(f'{key}: {state0_named[key][0]}')
 
     print(f'==== TLE prior {units_str} ====')
     for ind, key in enumerate(state_variables):
@@ -679,30 +680,40 @@ for dual_ind in my_dual_inds:
         post_grad.results.save(post_path)
         post_grad_results = post_grad.results
 
-
     if use_propagator == 'sgp4':
         for key in state_variables[3:]:
             post_grad_results.MAP[key] = np.mod(post_grad_results.MAP[key] + np.pi*4, np.pi*2)
 
-    post_lsq_state = [post_grad_results.MAP[key][0] for key in state_variables]
+    post_lsq_state = np.array([post_grad_results.MAP[key][0] for key in state_variables])
 
     if use_propagator == 'sgp4':
-        od_prop.out_frame = 'TEME'
-        lsq_iod_state0 = od_prop.propagate(
-            0,
-            np.array(post_lsq_state),
-            epoch = epoch_iod,
-            **params
-        )
-        od_prop.out_frame = 'ITRS'
+        _post_lsq_state = post_lsq_state.copy()
+        _post_lsq_state[0] *= 1e-3
+        lsq_iod_state0 = od_prop._sgp4_elems2cart(_post_lsq_state)
         mcmc_start = np.empty((1,), dtype=cart_dtype)
         for ind, name in enumerate(cart_vars):
             mcmc_start[name][0] = lsq_iod_state0[ind]
 
-        params['SGP4_mean_elements'] = False
+        params['SGP4_mean_cartesian'] = True
     else:
         mcmc_start = post_grad_results.MAP
 
+    if use_propagator == 'sgp4':
+        print(f'==== MCMC Start {units_str} ====')
+        for key in state_variables:
+            print(f'{key}: {post_grad_results.MAP[key][0]}')
+
+    print(f'==== MCMC Start {units_str_cart} ====')
+    for key in cart_vars:
+        print(f'{key}: {mcmc_start[key][0]}')
+
+    print(f'==== MCMC Start {units_str} ====')
+    state0 = od_prop._cart2sgp4_elems(lsq_iod_state0)
+    state0[0, ...] *= 1e3  # km to m
+    for ind, key in enumerate(state_variables):
+        print(f'{key}: {state0[ind]}')
+
+    od_prop.out_frame = 'ITRS'
     post = odlab.MCMCLeastSquares(
         data = input_data_state,
         variables = cart_vars,
@@ -723,8 +734,6 @@ for dual_ind in my_dual_inds:
         tune = 0,
         MPI = False,
     )
-    post_mcmc_state = [post_results.MAP[key][0] for key in state_variables]
-    post_mcmc_state_named = post_results.MAP.copy()
 
     post_mcmc_path = out_pth / f'mcmc_results_dual_obj{dual_ind}.h5'
     if post_mcmc_path.is_file() and not clobber:
@@ -734,16 +743,13 @@ for dual_ind in my_dual_inds:
         post.results.save(post_mcmc_path)
         post_results = post.results
 
-    if use_propagator == 'sgp4':
-        post_mcmc_state = od_prop.TEME_to_TLE(
-            np.array(post_mcmc_state), 
-            epoch_iod,
-            t=err_t_samp, 
-            B=params['B'], 
-        )
-        post_mcmc_state[0] *= 1e3 #km -> m
+    post_mcmc_state = np.array([post_results.MAP[key][0] for key in state_variables])
+    post_mcmc_state_named = post_results.MAP.copy()
 
-        params['SGP4_mean_elements'] = True
+    if use_propagator == 'sgp4':
+        post_mcmc_state = od_prop._cart2sgp4_elems(post_mcmc_state)
+        post_mcmc_state[0] *= 1e3  # km -> m
+        params['SGP4_mean_cartesian'] = False
 
     print(odlab.profiler)
 
@@ -752,7 +758,7 @@ for dual_ind in my_dual_inds:
 
     print(f'==== Start variables {units_str} ====')
     for key in state_variables:
-        print(f'{key}: {state0_named[key]}')
+        print(f'{key}: {state0_named[key][0]}')
 
     print(f'==== TLE prior {units_str} ====')
     for ind, key in enumerate(state_variables):
@@ -760,13 +766,13 @@ for dual_ind in my_dual_inds:
 
     print(f'==== IOD-LSQ result {units_str} ====')
     for key in state_variables:
-        print(f'{key}: {post_grad_results.MAP[key]}')
+        print(f'{key}: {post_grad_results.MAP[key][0]}')
 
     print(f'==== (IOD-LSQ - TLE) diff {units_str} ====')
     iod_results['lsq_teme_tle_diff'][dual_ind] = np.empty_like(true_prior)
     for ind, key in enumerate(state_variables):
-        print(f'{key}: {post_grad_results.MAP[key] - true_prior[ind]}')
-        iod_results['lsq_teme_tle_diff'][dual_ind][ind] = post_grad_results.MAP[key] - true_prior[ind]
+        print(f'{key}: {post_grad_results.MAP[key][0] - true_prior[ind]}')
+        iod_results['lsq_teme_tle_diff'][dual_ind][ind] = post_grad_results.MAP[key][0] - true_prior[ind]
 
     print(f'==== IOD-MCMC result {units_str} ====')
     for key in state_variables:
@@ -775,7 +781,7 @@ for dual_ind in my_dual_inds:
     print(f'==== (IOD-MCMC - TLE) diff {units_str} ====')
     iod_results['mcmc_teme_tle_diff'][dual_ind] = np.empty_like(true_prior)
     for ind, key in enumerate(state_variables):
-        print(f'{key}: {post_mcmc_state_named[key] - true_prior[ind]}')
+        print(f'{key}: {post_mcmc_state_named[key][0] - true_prior[ind]}')
         iod_results['mcmc_teme_tle_diff'][dual_ind][ind] = post_mcmc_state_named[key] - true_prior[ind]
 
     od_prop.out_frame = 'TEME'
@@ -827,7 +833,7 @@ for dual_ind in my_dual_inds:
         )
         lsq_iod_states = od_prop.propagate(
             err_t_samp,
-            np.array(post_lsq_state),
+            post_lsq_state,
             epoch = epoch_iod,
             **params
         )
