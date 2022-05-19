@@ -41,7 +41,7 @@ err_t_prop = 10*3600.0
 err_t_step = 10.0
 
 # steps = 10000
-steps = 20000
+steps = 40000
 step_arr = np.ones((6,), dtype=np.float64)*0.1
 
 err_t_samp = np.arange(0, err_t_prop, err_t_step, dtype=np.float64)
@@ -260,8 +260,10 @@ txs = [
 dual_inds = list(range(len(dual_corrs['cid'])))
 iod_results = {
     'id': [None for ind in dual_inds],
-    'mcmc_teme_tle_diff': [None for ind in dual_inds],
-    'lsq_teme_tle_diff': [None for ind in dual_inds],
+    'mcmc': [None for ind in dual_inds],
+    'lsq': [None for ind in dual_inds],
+    'start': [None for ind in dual_inds],
+    'tle': [None for ind in dual_inds],
 }
 
 beam_fwhm = []
@@ -311,8 +313,8 @@ else:
 odlab.profiler.enable('odlab')
 
 # my_dual_inds = [0, 1, 2]
-my_dual_inds = [0]
-print('RUNNING DEBUG MODE')
+# my_dual_inds = [0]
+# print('RUNNING DEBUG MODE')
 
 data_ids = {'uhf': 0, 'esr': 1}
 radar_lst = ['uhf', 'esr']
@@ -378,6 +380,12 @@ for dual_ind in my_dual_inds:
             event_peak_ids.append(event_peak)
 
             break
+
+    print('event peaks: ', event_peak_ids)
+    if len(event_peak_ids) < 2:
+        print('ERROR COULD NOT FIND SUMMARY FILE')
+        print(f'SKIPPING ID={dual_ind}')
+        continue
 
     tvs = []
     states = []
@@ -708,10 +716,10 @@ for dual_ind in my_dual_inds:
         print(f'{key}: {mcmc_start[key][0]}')
 
     print(f'==== MCMC Start {units_str} ====')
-    state0 = od_prop._cart2sgp4_elems(lsq_iod_state0)
-    state0[0, ...] *= 1e3  # km to m
+    state0_test = od_prop._cart2sgp4_elems(lsq_iod_state0)
+    state0_test[0, ...] *= 1e3  # km to m
     for ind, key in enumerate(state_variables):
-        print(f'{key}: {state0[ind]}')
+        print(f'{key}: {state0_test[ind]}')
 
     od_prop.out_frame = 'ITRS'
     post = odlab.MCMCLeastSquares(
@@ -760,6 +768,11 @@ for dual_ind in my_dual_inds:
         for ind, name in enumerate(cart_vars):
             true_prior_named_cart[name] = true_prior_cart[ind]
 
+    iod_results['start'][dual_ind] = state0
+    iod_results['tle'][dual_ind] = true_prior
+    iod_results['lsq'][dual_ind] = post_lsq_state
+    iod_results['mcmc'][dual_ind] = post_mcmc_state
+
     print(odlab.profiler)
 
     print(' POST GRADIENT ASCENT \n')
@@ -778,20 +791,16 @@ for dual_ind in my_dual_inds:
         print(f'{key}: {post_grad_results.MAP[key][0]}')
 
     print(f'==== (IOD-LSQ - TLE) diff {units_str} ====')
-    iod_results['lsq_teme_tle_diff'][dual_ind] = np.empty_like(true_prior)
     for ind, key in enumerate(state_variables):
         print(f'{key}: {post_grad_results.MAP[key][0] - true_prior[ind]}')
-        iod_results['lsq_teme_tle_diff'][dual_ind][ind] = post_grad_results.MAP[key][0] - true_prior[ind]
 
     print(f'==== IOD-MCMC result {units_str} ====')
     for key in cart_vars:
         print(f'{key}: {post_mcmc_state_named[key]}')
 
     print(f'==== (IOD-MCMC - TLE) diff {units_str} ====')
-    iod_results['mcmc_teme_tle_diff'][dual_ind] = np.empty_like(true_prior)
     for ind, key in enumerate(cart_vars):
         print(f'{key}: {post_mcmc_state_named[key][0] - true_prior[ind]}')
-        iod_results['mcmc_teme_tle_diff'][dual_ind][ind] = post_mcmc_state_named[key] - true_prior[ind]
 
     od_prop.out_frame = 'TEME'
     prop.out_frame = 'TEME'
