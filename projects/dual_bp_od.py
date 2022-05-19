@@ -743,13 +743,22 @@ for dual_ind in my_dual_inds:
         post.results.save(post_mcmc_path)
         post_results = post.results
 
-    post_mcmc_state = np.array([post_results.MAP[key][0] for key in state_variables])
+    post_mcmc_state = np.array([post_results.MAP[key][0] for key in cart_vars])
     post_mcmc_state_named = post_results.MAP.copy()
 
     if use_propagator == 'sgp4':
         post_mcmc_state = od_prop._cart2sgp4_elems(post_mcmc_state)
         post_mcmc_state[0] *= 1e3  # km -> m
         params['SGP4_mean_cartesian'] = False
+
+        post_mcmc_state_named_kep = post_grad_results.MAP.copy()
+        for ind, key in enumerate(state_variables):
+            post_mcmc_state_named_kep[key] = post_mcmc_state[ind]
+
+        true_prior_cart = od_prop._sgp4_elems2cart(true_prior)
+        true_prior_named_cart = np.empty((1,), dtype=cart_dtype)
+        for ind, name in enumerate(cart_vars):
+            true_prior_named_cart[name] = true_prior_cart[ind]
 
     print(odlab.profiler)
 
@@ -775,12 +784,12 @@ for dual_ind in my_dual_inds:
         iod_results['lsq_teme_tle_diff'][dual_ind][ind] = post_grad_results.MAP[key][0] - true_prior[ind]
 
     print(f'==== IOD-MCMC result {units_str} ====')
-    for key in state_variables:
+    for key in cart_vars:
         print(f'{key}: {post_mcmc_state_named[key]}')
 
     print(f'==== (IOD-MCMC - TLE) diff {units_str} ====')
     iod_results['mcmc_teme_tle_diff'][dual_ind] = np.empty_like(true_prior)
-    for ind, key in enumerate(state_variables):
+    for ind, key in enumerate(cart_vars):
         print(f'{key}: {post_mcmc_state_named[key][0] - true_prior[ind]}')
         iod_results['mcmc_teme_tle_diff'][dual_ind][ind] = post_mcmc_state_named[key] - true_prior[ind]
 
@@ -967,7 +976,7 @@ for dual_ind in my_dual_inds:
 
     fig = plt.figure(figsize=(15, 15))
     ax = fig.add_subplot(111)
-    ax.plot(err_t_samp/3600.0, iod_pos_err*1e-3, "-b", label='IOD-MCMC')
+    ax.plot(err_t_samp/3600.0, iod_pos_err*1e-3, "-r", label='IOD-MCMC')
     ax.plot(err_t_samp/3600.0, lsq_iod_pos_err*1e-3, "-b", label='IOD-LSQ')
     ax.legend()
     ax.set_xlabel('Time past IOD epoch [h]')
@@ -992,7 +1001,7 @@ for dual_ind in my_dual_inds:
     plt.close(fig)
 
     if use_propagator == 'kepler':
-        figs, axes = odlab.plot.trace(post_results, reference=true_prior_named)
+        figs, axes = odlab.plot.trace(post_results, reference=true_prior_named_cart)
         for ind, fig in enumerate(figs):
             fig.savefig(out_pth / f'IOD_MCMC_trace_p{ind}_dual_obj{dual_ind}.png')
             plt.close(fig)
@@ -1000,7 +1009,7 @@ for dual_ind in my_dual_inds:
     
     fig, axes = odlab.plot.scatter_trace(
         post_results, 
-        reference=true_prior_named,
+        reference=true_prior_named_cart,
         alpha = 0.1,
         size = 4,
     )
@@ -1016,8 +1025,8 @@ for dual_ind in my_dual_inds:
 
     for absolute in [True, False]:
         figs, axes = odlab.plot.residuals(
-            post, 
-            [state0_named, post_grad_results.MAP, post_mcmc_state_named, true_prior_named], 
+            post_grad, 
+            [state0_named, post_grad_results.MAP, post_mcmc_state_named_kep, true_prior_named], 
             ['IOD-start', 'IOD-LSQ-MAP', 'IOD-MCMC-MAP', 'TLE'], 
             ['-b', '-g', '-m', '-r'], 
             units = {'r': 'm', 'v': 'm/s'},
