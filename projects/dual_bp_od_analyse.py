@@ -78,7 +78,7 @@ axes[1, 0].hist(dr[1]*1e-3)
 axes[1, 1].hist(dv[1]*1e-3)
 
 dt = [
-    np.abs((iod_results['dt'][x][0] - iod_results['dt'][x][1]).sec/3600.0)
+    np.abs((iod_results['dt'][x][0] - iod_results['dt'][x][1]).sec/60.0)
     for x in ids
 ]
 norad = [
@@ -88,19 +88,51 @@ norad = [
 d = {
     'norad': norad,
     'dr_uhf': dr[0]*1e-3,
-    'dv_uhf': dv[0]*1e-3,
     'dr_esr': dr[1]*1e-3,
+    'dv_uhf': dv[0]*1e-3,
     'dv_esr': dv[1]*1e-3,
-    'da_lsq': diffs['lsq'][:, 0]*1e-3,
-    'de_lsq': diffs['lsq'][:, 1],
-    'di_lsq': diffs['lsq'][:, 2],
-    'draan_lsq': diffs['lsq'][:, 3],
-    'da_mcmc': diffs['mcmc'][:, 0]*1e-3,
-    'de_mcmc': diffs['mcmc'][:, 1],
-    'di_mcmc': diffs['mcmc'][:, 2],
-    'draan_mcmc': diffs['mcmc'][:, 3],
     'dt': dt,
 }
 df = pd.DataFrame(data=d)
 
-print(df.style.to_latex())
+print(
+    df.style
+    .format("{:.3f}")
+    .format("{:d}", 'norad')
+    .hide_index()
+    .to_latex()
+)
+
+d = {
+    'norad': norad,
+    'da_lsq': diffs['lsq'][:, 0]*1e-3,
+    'de_lsq': diffs['lsq'][:, 1],
+    'di_lsq': diffs['lsq'][:, 2],
+    'draan_lsq': diffs['lsq'][:, 3],
+}
+df = pd.DataFrame(data=d)
+
+print(
+    df.style
+    .format("{:.3f}")
+    .format("{:d}", 'norad')
+    .hide_index()
+    .to_latex()
+)
+
+d = {
+    'norad': norad,
+    'da_mcmc': diffs['mcmc'][:, 0]*1e-3,
+    'de_mcmc': diffs['mcmc'][:, 1],
+    'di_mcmc': diffs['mcmc'][:, 2],
+    'draan_mcmc': diffs['mcmc'][:, 3],
+}
+df = pd.DataFrame(data=d)
+
+print(
+    df.style
+    .format("{:.3f}")
+    .format("{:d}", 'norad')
+    .hide_index()
+    .to_latex()
+)

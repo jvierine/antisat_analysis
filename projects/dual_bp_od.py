@@ -273,6 +273,7 @@ iod_results = {
     'lsq': [None for ind in dual_inds],
     'start': [None for ind in dual_inds],
     'tle': [None for ind in dual_inds],
+    'mcmc_cov': [None for ind in dual_inds],
     'lsq_mean_dr': [None for ind in dual_inds],
     'lsq_mean_dv': [None for ind in dual_inds],
     'start_mean_dr': [None for ind in dual_inds],
@@ -335,8 +336,8 @@ DEBUG = False
 
 
 # my_dual_inds = [0, 1, 2]
-# my_dual_inds = [6]
-# DEBUG = True
+my_dual_inds = [6]
+DEBUG = True
 # print('RUNNING DEBUG MODE')
 
 data_ids = {'uhf': 0, 'esr': 1}
@@ -775,6 +776,15 @@ for dual_ind in my_dual_inds:
         post.run()
         post.results.save(post_mcmc_path)
         post_results = post.results
+
+    iod_cov = post_results.covariance_mat()*1e-3
+    print(' == IOD COV == ')
+    print(iod_cov)
+    print('LATEX')
+    for row in range(iod_cov.shape[0]):
+        print(' & '.join([f'{iod_cov[row, col]:.2f}' for col in range(iod_cov.shape[1])]))
+
+    iod_results['mcmc_cov'] = iod_cov
 
     post_mcmc_state = np.array([post_results.MAP[key][0] for key in cart_vars])
     post_mcmc_state_named = post_results.MAP.copy()
