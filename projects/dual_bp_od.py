@@ -32,6 +32,13 @@ import sorts
 import pyorb
 import pyant
 
+
+cmap_name = 'vibrant'
+color_cycle = sorts.plotting.colors.get_cycle(cmap_name)
+color_set = sorts.plotting.colors.get_cset(cmap_name)
+color_generator = color_cycle()
+# plt.rc('axes', prop_cycle=color_cycle)
+
 clobber = False
 use_propagator = 'sgp4'
 # use_propagator = 'kepler'
@@ -41,7 +48,9 @@ err_t_prop = 10*3600.0
 err_t_step = 10.0
 
 # steps = 10000
-steps = 40000
+# steps = 40000
+steps = 400000
+mcmc_mpi = True
 step_arr = np.ones((6,), dtype=np.float64)*0.1
 
 err_t_samp = np.arange(0, err_t_prop, err_t_step, dtype=np.float64)
@@ -264,6 +273,16 @@ iod_results = {
     'lsq': [None for ind in dual_inds],
     'start': [None for ind in dual_inds],
     'tle': [None for ind in dual_inds],
+    'lsq_mean_dr': [None for ind in dual_inds],
+    'lsq_mean_dv': [None for ind in dual_inds],
+    'start_mean_dr': [None for ind in dual_inds],
+    'start_mean_dv': [None for ind in dual_inds],
+    'tle_mean_dr': [None for ind in dual_inds],
+    'tle_mean_dv': [None for ind in dual_inds],
+    'mcmc_mean_dr': [None for ind in dual_inds],
+    'mcmc_mean_dv': [None for ind in dual_inds],
+    'dt': [None for ind in dual_inds],
+    'norad': [None for ind in dual_inds],
 }
 
 beam_fwhm = []
@@ -305,15 +324,19 @@ r_err = 5.0e2
 v_err = 1.0e2
 th_samples = 1000
 
-if comm.size > 1:
+if comm.size > 1 and not mcmc_mpi:
     my_dual_inds = dual_inds[comm.rank::comm.size]
 else:
     my_dual_inds = dual_inds
 
 odlab.profiler.enable('odlab')
 
+DEBUG = False
+
+
 # my_dual_inds = [0, 1, 2]
-# my_dual_inds = [0]
+# my_dual_inds = [6]
+# DEBUG = True
 # print('RUNNING DEBUG MODE')
 
 data_ids = {'uhf': 0, 'esr': 1}
@@ -339,6 +362,8 @@ for dual_ind in my_dual_inds:
     meas_times = []
     for ind, (tx, dat, mid) in enumerate(zip(txs, datas, mids)):
         meas_times.append(dat['times'][mid])
+
+    iod_results['dt'][dual_ind] = meas_times
 
     print('meas_times: ', [x.iso for x in meas_times])
     class fake_args:
@@ -740,7 +765,7 @@ for dual_ind in my_dual_inds:
         steps = steps,
         step = step,
         tune = 0,
-        MPI = False,
+        MPI = mcmc_mpi,
     )
 
     post_mcmc_path = out_pth / f'mcmc_results_dual_obj{dual_ind}.h5'
@@ -790,17 +815,9 @@ for dual_ind in my_dual_inds:
     for key in state_variables:
         print(f'{key}: {post_grad_results.MAP[key][0]}')
 
-    print(f'==== (IOD-LSQ - TLE) diff {units_str} ====')
-    for ind, key in enumerate(state_variables):
-        print(f'{key}: {post_grad_results.MAP[key][0] - true_prior[ind]}')
-
     print(f'==== IOD-MCMC result {units_str} ====')
     for key in cart_vars:
         print(f'{key}: {post_mcmc_state_named[key]}')
-
-    print(f'==== (IOD-MCMC - TLE) diff {units_str} ====')
-    for ind, key in enumerate(cart_vars):
-        print(f'{key}: {post_mcmc_state_named[key][0] - true_prior[ind]}')
 
     od_prop.out_frame = 'TEME'
     prop.out_frame = 'TEME'
@@ -810,6 +827,7 @@ for dual_ind in my_dual_inds:
         dual_corrs['line2'][dual_ind],
     )
     satnum = tle_prop['satnum']
+    iod_results['norad'][dual_ind] = satnum
 
     if use_propagator == 'kepler':
         true_prior_kep_orb = pyorb.Orbit(
@@ -824,7 +842,7 @@ for dual_ind in my_dual_inds:
             m=0, 
             num=1, 
             radians=False,
-            cartesian = np.array(post_mcmc_state).reshape(6, 1),
+            cartesian = post_mcmc_state.reshape(6, 1),
         )
         tle_states = od_prop.propagate(
             err_t_samp,
@@ -845,7 +863,7 @@ for dual_ind in my_dual_inds:
         )
         iod_states = od_prop.propagate(
             err_t_samp,
-            np.array(post_mcmc_state),
+            post_mcmc_state,
             epoch = epoch_iod,
             **params
         )
@@ -891,6 +909,8 @@ for dual_ind in my_dual_inds:
         )
         for tx in txs
     ]
+    start_iod_rv = []
+    lsq_iod_rv = []
     iod_rv = []
     tle_orb_rv = []
     for txi in range(len(txs)):
@@ -920,7 +940,19 @@ for dual_ind in my_dual_inds:
             )
             iod_states_meas = od_prop.propagate(
                 (meas_t[txi] - epoch_iod).sec,
-                np.array(post_mcmc_state),
+                post_mcmc_state,
+                epoch = epoch_iod,
+                **params
+            )
+            lsq_iod_states_meas = od_prop.propagate(
+                (meas_t[txi] - epoch_iod).sec,
+                post_lsq_state,
+                epoch = epoch_iod,
+                **params
+            )
+            start_iod_states_meas = od_prop.propagate(
+                (meas_t[txi] - epoch_iod).sec,
+                state0,
                 epoch = epoch_iod,
                 **params
             )
@@ -936,52 +968,94 @@ for dual_ind in my_dual_inds:
             in_frame='TEME', 
             out_frame='ITRS',
         )
+        lsq_iod_states_itrs_meas = sorts.frames.convert(
+            meas_t[txi], 
+            lsq_iod_states_meas, 
+            in_frame='TEME', 
+            out_frame='ITRS',
+        )
+        start_iod_states_itrs_meas = sorts.frames.convert(
+            meas_t[txi], 
+            start_iod_states_meas, 
+            in_frame='TEME', 
+            out_frame='ITRS',
+        )
         iod_rv.append(get_range_and_range_rate(txs[txi], iod_states_itrs_meas))
+        lsq_iod_rv.append(get_range_and_range_rate(txs[txi], lsq_iod_states_itrs_meas))
+        start_iod_rv.append(get_range_and_range_rate(txs[txi], start_iod_states_meas))
         tle_orb_rv.append(get_range_and_range_rate(txs[txi], tle_states_itrs_meas))
+
+    iod_results['start_mean_dr'][dual_ind] = [np.mean(np.abs(start_iod_rv[rdi][0] - meas_r[rdi])) for rdi in range(len(radar_lst))]
+    iod_results['start_mean_dv'][dual_ind] = [np.mean(np.abs(start_iod_rv[rdi][1] - meas_v[rdi])) for rdi in range(len(radar_lst))]
+    iod_results['lsq_mean_dr'][dual_ind] = [np.mean(np.abs(lsq_iod_rv[rdi][0] - meas_r[rdi])) for rdi in range(len(radar_lst))]
+    iod_results['lsq_mean_dv'][dual_ind] = [np.mean(np.abs(lsq_iod_rv[rdi][1] - meas_v[rdi])) for rdi in range(len(radar_lst))]
+    iod_results['mcmc_mean_dr'][dual_ind] = [np.mean(np.abs(iod_rv[rdi][0] - meas_r[rdi])) for rdi in range(len(radar_lst))]
+    iod_results['mcmc_mean_dv'][dual_ind] = [np.mean(np.abs(iod_rv[rdi][1] - meas_v[rdi])) for rdi in range(len(radar_lst))]
+    iod_results['tle_mean_dr'][dual_ind] = [np.mean(np.abs(sim_r[rdi] - meas_r[rdi])) for rdi in range(len(radar_lst))]
+    iod_results['tle_mean_dv'][dual_ind] = [np.mean(np.abs(sim_v[rdi] - meas_v[rdi])) for rdi in range(len(radar_lst))]
 
     od_prop.out_frame = 'ITRS'
     prop.out_frame = 'ITRS'
 
-    fig, axes = plt.subplots(2, 2, figsize=(15, 15))
-    axes[0, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, meas_r[0]*1e-3, 'r', label='Measurement')
-    axes[0, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, sim_r[0]*1e-3, 'b', label='TLE')
-    axes[0, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, iod_rv[0][0]*1e-3, 'g', label='IOD-MCMC')
-    axes[0, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, tle_orb_rv[0][0]*1e-3, '--c', label='TLE-Prior')
-    axes[0, 0].set_xlabel('Time past epoch [h]')
+    fig = plt.figure(constrained_layout=True, figsize=(10, 10))
+    subfigs = fig.subfigures(2, 1)
+    axes = subfigs[0].subplots(2, 2, sharex='col')
+    l1, = axes[0, 0].plot((tvs[0] - np.min(tvs[0])), meas_r[0]*1e-3, '-x', color=color_set.orange, label='Measurement')
+    l2, = axes[0, 0].plot((tvs[0] - np.min(tvs[0])), sim_r[0]*1e-3, '-', color=color_set.magenta, label='TLE')
+    l3, = axes[0, 0].plot((tvs[0] - np.min(tvs[0])), iod_rv[0][0]*1e-3, '-', color=color_set.black, label='IOD-MCMC')
+    l4, = axes[0, 0].plot((tvs[0] - np.min(tvs[0])), lsq_iod_rv[0][0]*1e-3, '-', color=color_set.teal, label='IOD-LSQ')
+    # axes[0, 0].plot((tvs[0] - np.min(tvs[0])), tle_orb_rv[0][0]*1e-3, '--c', label='TLE-Prior')
+    # axes[0, 0].set_xlabel(f'Time past {np.min(meas_t[0]).iso} [s]')
     axes[0, 0].set_ylabel('Range [km]')
-    axes[0, 0].set_title(radar_lst[0])
-    axes[0, 0].legend()
+    axes[0, 0].set_title(radar_lst[0].upper())
+    # axes[0, 0].legend()
 
-    axes[1, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, meas_v[0]*1e-3, 'r')
-    axes[1, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, sim_v[0]*1e-3, 'b')
-    axes[1, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, iod_rv[0][1]*1e-3, 'g')
-    axes[1, 0].plot((tvs[0] - np.min(tvs[0]))/3600.0, tle_orb_rv[0][1]*1e-3, '--c')
-    axes[1, 0].set_xlabel('Time past epoch [h]')
+    axes[1, 0].plot((tvs[0] - np.min(tvs[0])), meas_v[0]*1e-3, '-x', color=color_set.orange, label='Measurement')
+    axes[1, 0].plot((tvs[0] - np.min(tvs[0])), sim_v[0]*1e-3, '-', color=color_set.magenta, label='TLE')
+    axes[1, 0].plot((tvs[0] - np.min(tvs[0])), iod_rv[0][1]*1e-3, '-', color=color_set.black, label='IOD-MCMC')
+    axes[1, 0].plot((tvs[0] - np.min(tvs[0])), lsq_iod_rv[0][1]*1e-3, '-', color=color_set.teal, label='IOD-LSQ')
+    # axes[1, 0].plot((tvs[0] - np.min(tvs[0])), tle_orb_rv[0][1]*1e-3, '--c')
+    axes[1, 0].set_xlabel(f'Time + {np.min(meas_t[0]).datetime.time().strftime("%H:%M:%S")} [s]')
     axes[1, 0].set_ylabel('Doppler [km/s]')
-    axes[1, 0].set_title(radar_lst[0])
+    # axes[1, 0].set_title(radar_lst[0].upper())
     
-    axes[0, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, meas_r[1]*1e-3, 'r')
-    axes[0, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, sim_r[1]*1e-3, 'b')
-    axes[0, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, iod_rv[1][0]*1e-3, 'g')
-    axes[0, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, tle_orb_rv[1][0]*1e-3, '--c')
-    axes[0, 1].set_xlabel('Time past epoch [h]')
-    axes[0, 1].set_ylabel('Range [km]')
-    axes[0, 1].set_title(radar_lst[1])
+    axes[0, 1].plot((tvs[1] - np.min(tvs[1])), meas_r[1]*1e-3, '-x', color=color_set.orange, label='Measurement')
+    axes[0, 1].plot((tvs[1] - np.min(tvs[1])), sim_r[1]*1e-3, '-', color=color_set.magenta, label='TLE')
+    axes[0, 1].plot((tvs[1] - np.min(tvs[1])), iod_rv[1][0]*1e-3, '-', color=color_set.black, label='IOD-MCMC')
+    axes[0, 1].plot((tvs[1] - np.min(tvs[1])), lsq_iod_rv[1][0]*1e-3, '-', color=color_set.teal, label='IOD-LSQ')
+    # axes[0, 1].plot((tvs[1] - np.min(tvs[1])), tle_orb_rv[1][0]*1e-3, '--c')
+    # axes[0, 1].set_xlabel(f'Time past {np.min(meas_t[1]).iso} [s]')
+    # axes[0, 1].set_ylabel('Range [km]')
+    axes[0, 1].set_title(radar_lst[1].upper())
 
-    axes[1, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, meas_v[1]*1e-3, 'r')
-    axes[1, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, sim_v[1]*1e-3, 'b')
-    axes[1, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, iod_rv[1][1]*1e-3, 'g')
-    axes[1, 1].plot((tvs[1] - np.min(tvs[1]))/3600.0, tle_orb_rv[1][1]*1e-3, '--c')
-    axes[1, 1].set_xlabel('Time past epoch [h]')
-    axes[1, 1].set_ylabel('Doppler [km/s]')
-    axes[1, 1].set_title(radar_lst[1])
+    axes[1, 1].plot((tvs[1] - np.min(tvs[1])), meas_v[1]*1e-3, '-x', color=color_set.orange, label='Measurement')
+    axes[1, 1].plot((tvs[1] - np.min(tvs[1])), sim_v[1]*1e-3, '-', color=color_set.magenta, label='TLE')
+    axes[1, 1].plot((tvs[1] - np.min(tvs[1])), iod_rv[1][1]*1e-3, '-', color=color_set.black, label='IOD-MCMC')
+    axes[1, 1].plot((tvs[1] - np.min(tvs[1])), lsq_iod_rv[1][1]*1e-3, '-', color=color_set.teal, label='IOD-LSQ')
+    # axes[1, 1].plot((tvs[1] - np.min(tvs[1])), tle_orb_rv[1][1]*1e-3, '--c')
+    axes[1, 1].set_xlabel(f'Time + {np.min(meas_t[1]).datetime.time().strftime("%H:%M:%S")} [s]')
+    # axes[1, 1].set_ylabel('Doppler [km/s]')
+    # axes[1, 1].set_title(radar_lst[1].upper())
 
-    sup_tit = ''
-    for ind in range(len(radar_lst)):
-        sup_tit += f'Correlation {radar_lst[ind]}: r-err [m  ]: {-0.5*dual_corrs[f"dr{ind}"][dual_ind]}, '
-        sup_tit += f'v-err [m/s]: {-0.5*dual_corrs[f"dv{ind}"][dual_ind]}\n'
-    fig.suptitle(sup_tit)
+    # sup_tit = ''
+    # for ind in range(len(radar_lst)):
+    #     sup_tit += f'Correlation {radar_lst[ind]}: r-err [m  ]: {-0.5*dual_corrs[f"dr{ind}"][dual_ind]}, '
+    #     sup_tit += f'v-err [m/s]: {-0.5*dual_corrs[f"dv{ind}"][dual_ind]}\n'
+    # fig.suptitle(sup_tit)
+    subfigs[0].suptitle('Measurements & simulation')
+    ax = subfigs[1].subplots(1, 1)
+
+    ax.plot(err_t_samp/3600.0, iod_pos_err*1e-3, '-', color=color_set.black, label='IOD-MCMC')
+    ax.plot(err_t_samp/3600.0, lsq_iod_pos_err*1e-3, '-', color=color_set.teal, label='IOD-LSQ')
+    # ax.legend()
+    ax.legend(handles=[l1, l2, l3, l4])
+    ax.set_xlabel(f'Time + {epoch_iod.datetime.time().strftime("%H:%M:%S")} [h]')
+    ax.set_ylabel('Position difference [km]')
+    ax.set_title('IOD vs TLE difference')
+
+    fig.suptitle(f'Dual beampark IOD of NORAD-ID {satnum} on {epoch_iod.datetime.date()}')
     fig.savefig(out_pth / f'MEAS_vs_TLE_dual_obj{dual_ind}.png')
+    fig.savefig(out_pth / f'MEAS_vs_TLE_dual_obj{dual_ind}.eps')
 
     fig = plt.figure(figsize=(15, 15))
     ax = fig.add_subplot(111)
@@ -1030,6 +1104,7 @@ for dual_ind in my_dual_inds:
         alpha = 0.1,
     )
     fig.savefig(out_pth / f'IOD_MCMC_scatter_dual_obj{dual_ind}.png')
+    fig.savefig(out_pth / f'IOD_MCMC_scatter_dual_obj{dual_ind}.eps')
     plt.close(fig)
 
     for absolute in [True, False]:
@@ -1046,7 +1121,7 @@ for dual_ind in my_dual_inds:
             plt.close(fig)
 
     
-if comm.size > 1:
+if comm.size > 1 and not mcmc_mpi:
     mpi_inds = []
     for thr_id in range(comm.size):
         mpi_inds.append(dual_inds[thr_id::comm.size])
@@ -1066,5 +1141,6 @@ if comm.size > 1:
     if comm.rank != 0:
         exit()
 
-with open(results_data_file, 'wb') as fh:
-    pickle.dump(iod_results, fh)
+if not DEBUG:
+    with open(results_data_file, 'wb') as fh:
+        pickle.dump(iod_results, fh)
