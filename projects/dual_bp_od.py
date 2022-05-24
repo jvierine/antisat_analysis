@@ -284,6 +284,7 @@ iod_results = {
     'mcmc_mean_dv': [None for ind in dual_inds],
     'dt': [None for ind in dual_inds],
     'norad': [None for ind in dual_inds],
+    'mcmc_std': [None for ind in dual_inds],
 }
 
 beam_fwhm = []
@@ -336,8 +337,8 @@ DEBUG = False
 
 
 # my_dual_inds = [0, 1, 2]
-my_dual_inds = [6]
-DEBUG = True
+# my_dual_inds = [6]
+# DEBUG = True
 # print('RUNNING DEBUG MODE')
 
 data_ids = {'uhf': 0, 'esr': 1}
@@ -790,6 +791,21 @@ for dual_ind in my_dual_inds:
     post_mcmc_state_named = post_results.MAP.copy()
 
     if use_propagator == 'sgp4':
+
+        mcmc_trace = np.empty((6, len(post_results.trace)), dtype=np.float64)
+        for ind, name in enumerate(cart_vars):
+            mcmc_trace[ind, :] = post_results.trace[name]
+        mcmc_trace = od_prop._cart2sgp4_elems(mcmc_trace)
+        mcmc_trace[0, :] *= 1e3  # km -> m
+
+        IOD_std = np.empty((6, ), dtype=np.float64)
+        print('====== MCMC IOD UNCERT ======')
+        for ind, name in enumerate(state_variables):
+            IOD_std[ind] = np.std(mcmc_trace[ind, :])
+            print(f'{name}-std: {IOD_std[ind]}')
+
+        iod_results['mcmc_std'][dual_ind] = IOD_std
+
         post_mcmc_state = od_prop._cart2sgp4_elems(post_mcmc_state)
         post_mcmc_state[0] *= 1e3  # km -> m
         params['SGP4_mean_cartesian'] = False

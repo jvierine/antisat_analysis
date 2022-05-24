@@ -70,6 +70,12 @@ dv = [
     ])
     for rdi in [0, 1]
 ]
+std_mean = np.stack([
+    x
+    for x in iod_results['mcmc_std']
+    if x is not None
+])
+
 
 fig, axes = plt.subplots(2, 2, figsize=(12, 8))
 axes[0, 0].hist(dr[0]*1e-3)
@@ -126,6 +132,24 @@ d = {
     'de_mcmc': diffs['mcmc'][:, 1],
     'di_mcmc': diffs['mcmc'][:, 2],
     'draan_mcmc': diffs['mcmc'][:, 3],
+}
+df = pd.DataFrame(data=d)
+
+print(
+    df.style
+    .format("{:.3f}")
+    .format("{:d}", 'norad')
+    .hide_index()
+    .to_latex()
+)
+
+
+d = {
+    'norad': norad,
+    'da_mcmc': std_mean[:, 0]*1e-3,
+    'de_mcmc': std_mean[:, 1],
+    'di_mcmc': np.degrees(std_mean[:, 2]),
+    'draan_mcmc': np.degrees(std_mean[:, 3]),
 }
 df = pd.DataFrame(data=d)
 
