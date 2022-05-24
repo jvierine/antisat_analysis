@@ -858,16 +858,28 @@ def main_estimate(args):
         plt.close(fig)
 
         peak_diams_mat = 1e2*diams_at_peak.reshape(matches_mat.shape)
-        peak_small_lim = np.percentile(np.log10(matches[np.logical_not(np.isnan(matches))]).flatten(), 1)
+        peak_small_lim = np.percentile(np.log10(matches[np.logical_not(np.isnan(matches))]).flatten(), 2)
         peak_bool_map = np.log10(matches_mat) <= peak_small_lim
+        # peak_bool_map = np.logical_and.reduce([
+        #     incs_mat >= -0.1,
+        #     incs_mat <= 0.1,
+        #     nus_mat >= -0.04,
+        #     nus_mat <= 0.02,
+        # ])
+        # THIS IS JUST FOR PAPER PLOT
 
         fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True, sharey=True)
+
+        # __cmap = peak_diams_mat
+        __cmap = np.log10(peak_diams_mat)
+        __cmap[np.logical_not(peak_bool_map)] = np.nan
         pmesh = axes[0].pcolormesh(
             incs_mat, 
             nus_mat, 
-            np.log10(peak_diams_mat),
-            cmap=cm.get_cmap('nipy_spectral'),
+            __cmap,
+            cmap=sorts.plotting.colors.get_cmap('sunset'),
         )
+
         if not np.all(np.isnan(peak_diams_mat)):
             axes[0].set_xlim(
                 np.min(incs_mat[peak_bool_map]),
@@ -878,15 +890,19 @@ def main_estimate(args):
                 np.max(nus_mat[peak_bool_map]),
             )
         cbar = fig.colorbar(pmesh, ax=axes[0])
+        # cbar.set_label('Diameter at peak SNR\n[cm]')
         cbar.set_label('Diameter at peak SNR\n[log10(cm)]')
         axes[0].set_ylabel('Anomaly perturbation [deg]')
 
+        __cmap = np.log10(matches_mat)
+        __cmap[np.logical_not(peak_bool_map)] = np.nan
         pmesh = axes[1].pcolormesh(
             incs_mat, 
             nus_mat, 
-            np.log10(matches_mat),
-            cmap=cm.get_cmap('nipy_spectral'),
+            __cmap,
+            cmap=sorts.plotting.colors.get_cmap('sunset'),
         )
+
         cbar = fig.colorbar(pmesh, ax=axes[1])
         cbar.set_label('Distance function\n[log10(1)]')
         axes[1].set_xlabel('Inclination perturbation [deg]')
