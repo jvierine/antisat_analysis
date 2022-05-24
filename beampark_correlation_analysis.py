@@ -213,7 +213,7 @@ def main(input_args=None):
         ax.plot([np.log10(threshold_est), np.log10(threshold_est)], ax.get_ylim(), '--g', label='Estimated threshold')
         ax.plot(np.linspace(bins[0], bins[-1], 1000), bimodal(np.linspace(bins[0], bins[-1], 1000), *params), '-r', label='Fit')
 
-    ax.set_xlabel('Elliptical compound residual [log10(1)]')
+    ax.set_xlabel('Distance function [log10(1)]')
     ax.set_ylabel('Frequency [1]')
     ax.set_title(title_str)
     ax.legend()
