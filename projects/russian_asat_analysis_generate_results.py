@@ -340,6 +340,8 @@ for key in data_paths:
 print(' && '.join(kosmos_correlate_commands))
 print('\n')  
 
+
+
 kosmos_correlation_analysis_cmds = []
 kosmos_correlation_select = {}
 for key in data_paths:
@@ -359,8 +361,8 @@ for key in data_paths:
         
         kosmos_correlation_analysis_cmds.append(cmd)
 print(' && '.join(kosmos_correlation_analysis_cmds))
-
-
+print('\n')  
+# exit()
 # In[25]:
 
 

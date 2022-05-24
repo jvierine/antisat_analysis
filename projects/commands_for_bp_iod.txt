@@ -1,15 +1,15 @@
-mpirun -n 6 ./beampark_correlator.py eiscat_uhf /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021_11_23_spacetrack.tle /home/danielk/git/antisat_analysis/projects/output/russian_asat/uhf/2021.11.23.h5 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_uhf_correlation.pickle  --jitter --range-scaling 1.0 --range-rate-scaling 0.2  -c
-
-mpirun -n 6 ./beampark_correlator.py eiscat_uhf /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021_11_25_spacetrack.tle /home/danielk/git/antisat_analysis/projects/output/russian_asat/uhf/2021.11.25.h5 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.25_uhf_correlation.pickle  --jitter --range-scaling 1.0 --range-rate-scaling 0.2  -c
-
-mpirun -n 6 ./beampark_correlator.py eiscat_uhf /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021_11_29_spacetrack.tle /home/danielk/git/antisat_analysis/projects/output/russian_asat/uhf/2021.11.29.h5 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.29_uhf_correlation.pickle  --jitter --range-scaling 1.0 --range-rate-scaling 0.2  -c
-
-mpirun -n 6 ./beampark_correlator.py eiscat_esr /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021_11_19_spacetrack.tle /home/danielk/git/antisat_analysis/projects/output/russian_asat/esr/2021.11.19.h5 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.19_esr_correlation.pickle  --jitter --range-scaling 1.0 --range-rate-scaling 0.2  -c
-
-mpirun -n 6 ./beampark_correlator.py eiscat_esr /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021_11_23_spacetrack.tle /home/danielk/git/antisat_analysis/projects/output/russian_asat/esr/2021.11.23.h5 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_esr_correlation.pickle  --jitter --range-scaling 1.0 --range-rate-scaling 0.2  -c
-
-mpirun -n 6 ./beampark_correlator.py eiscat_esr /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021_11_25_spacetrack.tle /home/danielk/git/antisat_analysis/projects/output/russian_asat/esr/2021.11.25.h5 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.25_esr_correlation.pickle  --jitter --range-scaling 1.0 --range-rate-scaling 0.2  -c
-
+mpirun -n 6 ./beampark_correlator.py eiscat_uhf /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021_11_23_spacetrack.tle /home/danielk/git/antisat_analysis/projects/output/russian_asat/uhf/2021.11.23.h5 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_uhf_correlation.pickle  --jitter --range-scaling 1.0 --range-rate-scaling 0.2  -c \
+&& \
+mpirun -n 6 ./beampark_correlator.py eiscat_uhf /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021_11_25_spacetrack.tle /home/danielk/git/antisat_analysis/projects/output/russian_asat/uhf/2021.11.25.h5 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.25_uhf_correlation.pickle  --jitter --range-scaling 1.0 --range-rate-scaling 0.2  -c \
+&& \
+mpirun -n 6 ./beampark_correlator.py eiscat_uhf /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021_11_29_spacetrack.tle /home/danielk/git/antisat_analysis/projects/output/russian_asat/uhf/2021.11.29.h5 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.29_uhf_correlation.pickle  --jitter --range-scaling 1.0 --range-rate-scaling 0.2  -c \
+&& \
+mpirun -n 6 ./beampark_correlator.py eiscat_esr /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021_11_19_spacetrack.tle /home/danielk/git/antisat_analysis/projects/output/russian_asat/esr/2021.11.19.h5 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.19_esr_correlation.pickle  --jitter --range-scaling 1.0 --range-rate-scaling 0.2  -c \
+&& \
+mpirun -n 6 ./beampark_correlator.py eiscat_esr /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021_11_23_spacetrack.tle /home/danielk/git/antisat_analysis/projects/output/russian_asat/esr/2021.11.23.h5 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_esr_correlation.pickle  --jitter --range-scaling 1.0 --range-rate-scaling 0.2  -c \
+&& \
+mpirun -n 6 ./beampark_correlator.py eiscat_esr /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021_11_25_spacetrack.tle /home/danielk/git/antisat_analysis/projects/output/russian_asat/esr/2021.11.25.h5 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.25_esr_correlation.pickle  --jitter --range-scaling 1.0 --range-rate-scaling 0.2  -c \
+&& \
 mpirun -n 6 ./beampark_correlator.py eiscat_esr /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021_11_29_spacetrack.tle /home/danielk/git/antisat_analysis/projects/output/russian_asat/esr/2021.11.29.h5 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.29_esr_correlation.pickle  --jitter --range-scaling 1.0 --range-rate-scaling 0.2  -c
 
 
@@ -21,18 +21,18 @@ mpirun -n 6 ./beampark_correlator.py eiscat_esr /home/danielk/git/antisat_analys
 
 
 
-./beampark_correlation_analysis.py --output /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_uhf_correlation_plots  --range-scaling 1.0 --range-rate-scaling 0.2 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_uhf_correlation.pickle /home/danielk/git/antisat_analysis/projects/output/russian_asat/uhf/2021.11.23.h5
-
-./beampark_correlation_analysis.py --output /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.25_uhf_correlation_plots  --range-scaling 1.0 --range-rate-scaling 0.2 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.25_uhf_correlation.pickle /home/danielk/git/antisat_analysis/projects/output/russian_asat/uhf/2021.11.25.h5
-
-./beampark_correlation_analysis.py --output /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.29_uhf_correlation_plots  --range-scaling 1.0 --range-rate-scaling 0.2 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.29_uhf_correlation.pickle /home/danielk/git/antisat_analysis/projects/output/russian_asat/uhf/2021.11.29.h5
-
-./beampark_correlation_analysis.py --output /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.19_esr_correlation_plots  --range-scaling 1.0 --range-rate-scaling 0.2 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.19_esr_correlation.pickle /home/danielk/git/antisat_analysis/projects/output/russian_asat/esr/2021.11.19.h5
-
-./beampark_correlation_analysis.py --output /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_esr_correlation_plots  --range-scaling 1.0 --range-rate-scaling 0.2 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_esr_correlation.pickle /home/danielk/git/antisat_analysis/projects/output/russian_asat/esr/2021.11.23.h5
-
-./beampark_correlation_analysis.py --output /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.25_esr_correlation_plots  --range-scaling 1.0 --range-rate-scaling 0.2 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.25_esr_correlation.pickle /home/danielk/git/antisat_analysis/projects/output/russian_asat/esr/2021.11.25.h5
-
+./beampark_correlation_analysis.py --output /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_uhf_correlation_plots  --range-scaling 1.0 --range-rate-scaling 0.2 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_uhf_correlation.pickle /home/danielk/git/antisat_analysis/projects/output/russian_asat/uhf/2021.11.23.h5 \
+&& \
+./beampark_correlation_analysis.py --output /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.25_uhf_correlation_plots  --range-scaling 1.0 --range-rate-scaling 0.2 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.25_uhf_correlation.pickle /home/danielk/git/antisat_analysis/projects/output/russian_asat/uhf/2021.11.25.h5 \
+&& \
+./beampark_correlation_analysis.py --output /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.29_uhf_correlation_plots  --range-scaling 1.0 --range-rate-scaling 0.2 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.29_uhf_correlation.pickle /home/danielk/git/antisat_analysis/projects/output/russian_asat/uhf/2021.11.29.h5 \
+&& \
+./beampark_correlation_analysis.py --output /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.19_esr_correlation_plots  --range-scaling 1.0 --range-rate-scaling 0.2 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.19_esr_correlation.pickle /home/danielk/git/antisat_analysis/projects/output/russian_asat/esr/2021.11.19.h5 \
+&& \
+./beampark_correlation_analysis.py --output /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_esr_correlation_plots  --range-scaling 1.0 --range-rate-scaling 0.2 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.23_esr_correlation.pickle /home/danielk/git/antisat_analysis/projects/output/russian_asat/esr/2021.11.23.h5 \
+&& \
+./beampark_correlation_analysis.py --output /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.25_esr_correlation_plots  --range-scaling 1.0 --range-rate-scaling 0.2 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.25_esr_correlation.pickle /home/danielk/git/antisat_analysis/projects/output/russian_asat/esr/2021.11.25.h5 \
+&& \
 ./beampark_correlation_analysis.py --output /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.29_esr_correlation_plots  --range-scaling 1.0 --range-rate-scaling 0.2 /home/danielk/git/antisat_analysis/projects/output/russian_asat/2021.11.29_esr_correlation.pickle /home/danielk/git/antisat_analysis/projects/output/russian_asat/esr/2021.11.29.h5
 
 

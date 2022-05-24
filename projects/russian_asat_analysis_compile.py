@@ -16,7 +16,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from matplotlib.gridspec import GridSpec
-
+from pprint import pprint
 # plt.style.use('dark_background')
 
 import sorts
@@ -35,7 +35,8 @@ print(f'Using {OUTPUT} as output')
 
 clobber = False
 # fig_format = 'eps'
-fig_format = 'png'
+# fig_format = 'png'
+fig_format = ''
 
 # In[3]:
 
@@ -99,6 +100,7 @@ def calculate_categories(radar, date_ind, kosmos_selection):
     with h5py.File(paths['data_paths'][radar][date_ind], 'r') as hf:
         for key in hf:
             data[key] = hf[key][()]
+    print(paths['correlation_select'][radar][date_ind])
     select = np.load(paths['correlation_select'][radar][date_ind])
     kosmos_select = np.load(paths['kosmos_correlation_select'][radar][date_ind])
     date = paths['data_paths'][radar][date_ind].stem.replace('.', '-')
@@ -205,7 +207,8 @@ def plot_cat(category, t_boxes, r_box, v_boxes, t, r, v, radar, date_ind):
     axes_z[1].set_ylim(*v_boxes[0])
     axes_z[1].set_xlabel('Epoch + time [h]')
     
-    fig.savefig(out_plots / f'{date}_{radar}_rv_scatter.{fig_format}')
+    if len(fig_format) > 0:
+        fig.savefig(out_plots / f'{date}_{radar}_rv_scatter.{fig_format}')
 
     fig, ax = plt.subplots(figsize=(8, 6))
     ax.bar(range(4), [np.sum(category == ind) for ind in range(4)])
@@ -213,7 +216,8 @@ def plot_cat(category, t_boxes, r_box, v_boxes, t, r, v, radar, date_ind):
     ax.set_ylabel('Detections')
     ax.set_title(f'{radar_title[radar][date_ind]} beampark {date}')
     
-    fig.savefig(out_plots / f'{date}_{radar}_categories.{fig_format}')
+    if len(fig_format) > 0:
+        fig.savefig(out_plots / f'{date}_{radar}_categories.{fig_format}')
 
 
 # In[10]:
@@ -258,7 +262,11 @@ kosmos_selection = {
 for radar in radar_title:
     for ind in range(len(radar_title[radar])):
         category, t_boxes, r_box, v_boxes, t, r, v = calculate_categories(radar, ind, kosmos_selection)
+
+        cat_data = {}
+        for ci, key in enumerate(category_names):
+            cat_data[key] = np.sum(category == ci)
+        print(radar_title[radar][ind] + f' - {ind}')
+        pprint(cat_data)
+
         plot_cat(category, t_boxes, r_box, v_boxes, t, r, v, radar, ind)
-
-
-
