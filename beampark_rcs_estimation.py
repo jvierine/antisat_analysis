@@ -879,6 +879,7 @@ def main_estimate(args):
             __cmap,
             cmap=sorts.plotting.colors.get_cmap('sunset'),
         )
+        axes[0].plot(incs[best_ind], nus[best_ind], 'or')
 
         if not np.all(np.isnan(peak_diams_mat)):
             axes[0].set_xlim(
@@ -902,6 +903,7 @@ def main_estimate(args):
             __cmap,
             cmap=sorts.plotting.colors.get_cmap('sunset'),
         )
+        axes[1].plot(incs[best_ind], nus[best_ind], 'or')
 
         cbar = fig.colorbar(pmesh, ax=axes[1])
         cbar.set_label('Distance function\n[log10(1)]')
@@ -987,7 +989,11 @@ def main_estimate(args):
         plt.close(fig)
 
         fig, ax = plt.subplots(figsize=(12, 8))
-        pmesh = ax.pcolormesh(incs_mat, nus_mat, np.log10(matches_mat))
+
+        __cmap = np.log10(matches_mat)
+        # __cmap[__cmap > -1.5] = np.nan
+        # for paper color scaling (just 1 point)
+        pmesh = ax.pcolormesh(incs_mat, nus_mat, __cmap, cmap=sorts.plotting.colors.get_cmap('sunset'))
         cbar = fig.colorbar(pmesh, ax=ax)
         ax.plot(incs[best_ind], nus[best_ind], 'or')
         cbar.set_label('Distance function [log10(1)]')

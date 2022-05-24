@@ -264,8 +264,11 @@ for radar in radar_title:
         category, t_boxes, r_box, v_boxes, t, r, v = calculate_categories(radar, ind, kosmos_selection)
 
         cat_data = {}
+        cat_data['total'] = 0
         for ci, key in enumerate(category_names):
             cat_data[key] = np.sum(category == ci)
+            cat_data['total'] += cat_data[key]
+
         print(radar_title[radar][ind] + f' - {ind}')
         pprint(cat_data)
 
