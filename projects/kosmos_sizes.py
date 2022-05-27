@@ -319,8 +319,8 @@ axes[1].hist(
     bins=int(np.sqrt(np.sum(keep_stats))), 
     color='b',
 )
-axes[1].set_title('Estimated from SNR cruve')
-axes[2].set_title('${\\frac{\\mathrm{from\\;SNR\\;cruve}}{\\mathrm{from\\;TLE}}}$', fontsize=30, pad=20)
+axes[1].set_title('Estimated from SNR curve')
+axes[2].set_title('${\\frac{\\mathrm{from\\;SNR\\;curve}}{\\mathrm{from\\;TLE}}}$', fontsize=30, pad=20)
 axes[2].hist(
     np.log10(results['estimated_diam'][keep_stats]/results['predicted_diam'][keep_stats]),
     bins=int(np.sqrt(np.sum(keep_stats))),
