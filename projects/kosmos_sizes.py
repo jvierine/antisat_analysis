@@ -306,21 +306,21 @@ fig.suptitle('Scattering function region comparison')
 fig.savefig(rcs_plot_path / f'scattering_estimated_vs_boresight_diam.{fig_format}')
 plt.close(fig)
 
-
+plt.rc('text', usetex=True)
 fig, axes = plt.subplots(1, 3, figsize=(12, 5))
 axes[0].hist(
     np.log10(results['predicted_diam'][keep_stats]*1e2),
     bins=int(np.sqrt(np.sum(keep_stats))), 
     color='b',
 )
-axes[0].set_title('Predicted from TLE')
+axes[0].set_title('Estimated from TLE')
 axes[1].hist(
     np.log10(results['estimated_diam'][keep_stats]*1e2),
     bins=int(np.sqrt(np.sum(keep_stats))), 
     color='b',
 )
-axes[1].set_title('Estimated')
-axes[2].set_title('Fraction\n[-lower/+higher estimate]')
+axes[1].set_title('Estimated from SNR cruve')
+axes[2].set_title('${\\frac{\\mathrm{from\\;SNR\\;cruve}}{\\mathrm{from\\;TLE}}}$', fontsize=30, pad=20)
 axes[2].hist(
     np.log10(results['estimated_diam'][keep_stats]/results['predicted_diam'][keep_stats]),
     bins=int(np.sqrt(np.sum(keep_stats))),
@@ -332,9 +332,10 @@ axes[2].set_xlabel('Diameter fraction\n[log10(fraction)]')
 for ax in axes:
     ax.set_ylabel('Frequency [1]')
 
-fig.suptitle('Size distribution estimated versus predicted')
+fig.suptitle('Size estimation comparison')
 fig.savefig(rcs_plot_path / f'predicted_vs_estimated_diam.{fig_format}')
 plt.close(fig)
+plt.rc('text', usetex=False)
 
 fig, axes = plt.subplots(2, 1, figsize=(12, 8))
 axes[0].hist(
