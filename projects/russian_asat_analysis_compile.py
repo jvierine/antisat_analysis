@@ -269,6 +269,8 @@ for radar in radar_title:
             cat_data[key] = np.sum(category == ci)
             cat_data['total'] += cat_data[key]
 
+        print(cat_data['Uncorrelated KOSMOS-1408']/(cat_data['Uncorrelated KOSMOS-1408'] + cat_data['Uncorrelated background']))
+
         print(radar_title[radar][ind] + f' - {ind}')
         pprint(cat_data)
 
