@@ -155,79 +155,97 @@ def offaxis_weighting(angles):
     return w
 
 
-def snr_cut_weighting(off_weight, idx_y, SNR_sim, not_used, snrdb_lim_rel):
-
-    if not np.any(not_used):
-        snr_cut_matching = 0
-    elif np.sum(idx_y) > 1:
-        idx_n = SNR_sim[not_used] > 0
-        if np.sum(idx_n) > 1:
-            # Here we check that SNR cutting matches
-            sns_not = np.log10(SNR_sim[not_used][idx_n])*10
-            sns_max = np.log10(np.max(SNR_sim[np.logical_not(not_used)][idx_y]))*10
-            
-            sns_lim = sns_max - snrdb_lim_rel
-            too_high = sns_not > sns_lim
-
-            snr_cut_matching = sns_not[too_high]/sns_max
-            snr_diff = snr_cut_matching*off_weight[not_used][idx_n][too_high]
-            
-            snr_cut_matching = np.sum(snr_diff**2)
-        else:
-            snr_cut_matching = 0
-    else:
-        snr_cut_matching = np.nan
-
-    return snr_cut_matching
-
-
-def matching_function(data, SNR_sim, off_angles, args):
+def matching_function(data, SNR_sim, off_angles, args, debug=False):
     # Filter measurnments
+    _SNR_sim = SNR_sim.copy()
+    _SNR_sim[_SNR_sim <= 0] = np.nan
     sndb = np.log10(data['SNR'].values)*10
-    use_data = sndb > args.min_snr
-    max_sndb_m = np.log10(np.max(data['SNR'].values))*10
-    snrdb_lim_rel = max_sndb_m - args.min_snr
+    snsdb = np.log10(_SNR_sim)*10
+    if np.all(np.isnan(_SNR_sim)):
+        match = np.nan
+        meta = [np.nan, np.nan]
+        return match, meta
+
+    max_sndb_x = np.log10(np.nanmax(data['SNR'].values))*10
+    max_sndb_y = np.log10(np.nanmax(_SNR_sim))*10
+    #ratio of peak signal and limit should be the same
+    #as the ratio of the simulated peak and the simulated signal
+    #use this to calculate the limit used in simulation
+    snrdb_lim_rel = max_sndb_x - args.min_snr
+    sns_lim = max_sndb_y - snrdb_lim_rel
+    #the normalized limit is, since the normalizations put peaks to 1
+    snrdb_lim_norm = -snrdb_lim_rel
 
     off_weight = offaxis_weighting(off_angles)
 
-    sn = data['SNR'].values[use_data]
+    sn = data['SNR'].values
     xsn = np.full(sn.shape, np.nan, dtype=sn.dtype)
     idx_x = sn > 0
     if np.sum(idx_x) > 1:
-        xsn[idx_x] = np.log10(sn[idx_x]/np.max(sn[idx_x]))
-        xsn[np.logical_not(idx_x)] = np.nan
-    
-    sns = SNR_sim[use_data]
+        xsn[idx_x] = np.log10(sn[idx_x]/np.nanmax(sn[idx_x]))
+    idx_x = np.logical_not(np.isnan(xsn))
+
+    sns = _SNR_sim
     ysn = np.full(sns.shape, np.nan, dtype=sn.dtype)
     idx_y = sns > 0
     if np.sum(idx_y) > 1:
-        ysn[idx_y] = np.log10(sns[idx_y]/np.max(sns[idx_y]))
-        ysn[np.logical_not(idx_y)] = np.nan
+        ysn[idx_y] = np.log10(sns[idx_y]/np.nanmax(sns[idx_y]))
+    idx_y = np.logical_not(np.isnan(ysn))
 
-    idx = np.logical_not(np.logical_or(np.isnan(xsn), np.isnan(ysn)))
-    not_idx = np.logical_not(idx)
+    idx = np.logical_and(idx_x, idx_y)
     tot = np.sum(idx)
+
+    dhit_idx = np.logical_and.reduce([
+        sndb > args.min_snr, 
+        snsdb > sns_lim,
+        idx,
+    ])
+    dcut_idx = np.logical_and.reduce([
+        np.logical_or(sndb <= args.min_snr, np.logical_not(idx_x)),
+        snsdb > sns_lim,
+        idx_y,
+    ])
+    dmiss_idx = np.logical_and.reduce([
+        sndb > args.min_snr, 
+        np.logical_or(snsdb <= sns_lim, np.logical_not(idx_y)),
+        idx_x,
+    ])
+
+    dhit = np.nan
+    dcut = np.nan
+    dmiss = np.nan
+
     if tot > 1:
-        # each missed data point counts for the SNR of the measurement in size
-        missed_points = np.sum((xsn[not_idx]*off_weight[use_data][not_idx])**2)
+        if np.any(dhit_idx):
+            dhit = np.sum(((xsn[dhit_idx] - ysn[dhit_idx])*off_weight[dhit_idx])**2)
+        if np.any(dcut_idx):
+            dcut = np.sum(((ysn[dcut_idx] - snrdb_lim_norm)*off_weight[dcut_idx])**2)
+        if np.any(dmiss_idx):
+            dmiss = np.sum((xsn[dmiss_idx]*off_weight[dmiss_idx])**2)
 
-        # then calculate the match (distance now)
-        match = np.sum(((xsn[idx] - ysn[idx])*off_weight[use_data][idx])**2) + missed_points
-    else:
-        missed_points = np.nan
-        match = np.nan
+    match = dhit
+    if not np.isnan(dcut):
+        match += dcut
+    if not np.isnan(dmiss):
+        match += dmiss
+    match_0 = match
+    match = np.sqrt(match/len(SNR_sim))
+    meta = [dcut/len(SNR_sim), dmiss/len(SNR_sim)]
 
-    not_used = np.logical_not(use_data)
-    snr_cut_matching = snr_cut_weighting(
-        off_weight, idx_y, SNR_sim, not_used, snrdb_lim_rel
-    )
-
-    match += snr_cut_matching
-    match = np.sqrt(match)
-
-    # Might do this so that matches are more easily compared between events?
-    match = match/len(SNR_sim)
-    meta = [snr_cut_matching, missed_points]
+    if debug:
+        print('idx_x: ', idx_x)
+        print('idx_y: ', idx_y)
+        print('idx: ', idx)
+        print('dhit_idx: ', dhit_idx)
+        print('dcut_idx: ', dcut_idx)
+        print('dmiss_idx: ', dmiss_idx)
+        print('tot: ', tot)
+        print('dhit: ', dhit)
+        print('dcut: ', dcut)
+        print('dmiss: ', dmiss)
+        print('match_0: ', match_0)
+        print('match: ', match)
+        print('meta: ', meta)
 
     return match, meta
 
@@ -368,7 +386,7 @@ def plot_match(
     )
     axes[0, 1].set_ylabel('Diameter [log10(cm)]')
 
-    interval = 0.4
+    interval = 0.6
 
     max_sn = np.argmax(sn_m)
     d_peak = diams[max_sn]*1e2
@@ -451,7 +469,7 @@ def plot_match(
     axes[1, 0].set_ylabel('Normalized SNR [1]')
     axes[1, 1].set_ylabel('Normalized SNR [dB]')
     title_date = results_folder.stem.split('_')
-    fig.suptitle(f'{title_date[0].upper()} - {mdate}:\nd_cut={match_data[0]:.2e}, d_miss={match_data[1]:.2e}, d_hit={match_data[2]:.2e}, D={match_data[3]:.2e}')
+    fig.suptitle(f'{title_date[0].upper()} - {mdate}:\nd_cut/N={match_data[0]:.2e}, d_miss/N={match_data[1]:.2e}, d_hit/N={match_data[2]:.2e}, D={match_data[3]:.2e}')
     fig.savefig(results_folder / f'match{mch_rank}_data.{args.format}')
     plt.close(fig)
 
@@ -511,6 +529,7 @@ def main_estimate(args):
 
     event_data = read_extended_event_data(input_summaries, args)
 
+    # len(event_names)
     inds = list(range(len(event_names)))
     step = int(len(event_names)/comm.size + 1)
     all_inds = [
@@ -707,6 +726,12 @@ def main_estimate(args):
         best_gains = np.array([gains[ind][snr_max] for ind in best_matches_inds])
         best_ind = best_matches_inds[0]
 
+        # DEBUG
+        # matching_function(
+        #     data, SNR_sims[best_ind], pths_off_angle[best_ind], args, 
+        #     debug=True,
+        # )
+
         diams_at_peak = np.array([diams[ind][snr_max] for ind in np.arange(len(diams))])
         diams_at_peak_mat = diams_at_peak.reshape(nus_mat.shape)
 
@@ -869,6 +894,7 @@ def main_estimate(args):
         peak_diams_mat = 1e2*diams_at_peak.reshape(matches_mat.shape)
         peak_small_lim = np.percentile(np.log10(matches[np.logical_not(np.isnan(matches))]).flatten(), 2)
         peak_bool_map = np.log10(matches_mat) <= peak_small_lim
+
         # peak_bool_map = np.logical_and.reduce([
         #     incs_mat >= -0.1,
         #     incs_mat <= 0.1,
@@ -954,10 +980,15 @@ def main_estimate(args):
             sn_s = SNR_sims[mch_ind]/np.max(SNR_sims[mch_ind])
             sn_s[sn_s <= 0] = np.nan
 
+            dhit = matches[mch_ind]**2
+            if not np.isnan(metas[mch_ind][0]):
+                dhit -= metas[mch_ind][0]
+            if not np.isnan(metas[mch_ind][1]):
+                dhit -= metas[mch_ind][1]
             match_data = [
-                metas[ind][0], 
-                metas[ind][1], 
-                matches[mch_ind]**2 - metas[mch_ind][0] - metas[mch_ind][1], 
+                metas[mch_ind][0], 
+                metas[mch_ind][1], 
+                dhit, 
                 matches[mch_ind],
             ]
             
@@ -972,10 +1003,16 @@ def main_estimate(args):
         orig = np.argmin(off_angles.flatten())
         sn_s = SNR_sims[orig]/np.max(SNR_sims[orig])
         sn_s[sn_s <= 0] = np.nan
+
+        dhit = matches[orig]**2
+        if not np.isnan(metas[orig][0]):
+            dhit -= metas[orig][0]
+        if not np.isnan(metas[orig][1]):
+            dhit -= metas[orig][1]
         match_data = [
             metas[orig][0], 
             metas[orig][1], 
-            matches[orig]**2 - metas[orig][0] - metas[orig][1], 
+            dhit, 
             matches[orig],
         ]
         plot_match(
@@ -1049,36 +1086,41 @@ def main_estimate(args):
             norm=plt.Normalize(vmin=vmin, vmax=vmax),
         )
 
-        fig1, ax1 = plt.subplots(figsize=(12, 8))
-        fig2, ax2 = plt.subplots(figsize=(12, 8))
-        fig3, ax3 = plt.subplots(figsize=(12, 8))
-        for ind, pth in enumerate(pths):
-            cval = (matches[ind] - vmin)/(vmax - vmin)
-            ax1.plot(pth[0, :], pth[1, :], color=cmap(cval), alpha=0.1)
-            ax2.plot(pth[0, :], pth[1, :], color=[0.5, 0.5, 0.5], alpha=0.1)
-            ax3.plot(pth[0, snr_max], pth[1, snr_max], '.', color=cmap3(cval))
-        cbar = fig.colorbar(sm, ax=ax1)
-        cbar.set_label('Distance function [1]')
-        cbar = fig.colorbar(sm3, ax=ax3)
-        cbar.set_label('Distance function [1]')
-        pyant.plotting.gain_heatmap(
-            radar.tx[0].beam, 
-            min_elevation=85.0, 
-            ax=ax2,
-        )
-        ax2.set_ylim(ax1.get_ylim())
-        ax2.set_xlim(ax1.get_xlim())
+        # fig1, ax1 = plt.subplots(figsize=(12, 8))
+        # fig2, ax2 = plt.subplots(figsize=(12, 8))
+        # fig3, ax3 = plt.subplots(figsize=(12, 8))
+        # for ind, pth in enumerate(pths):
+        #     cval = (matches[ind] - vmin)/(vmax - vmin)
+        #     ax1.plot(pth[0, :], pth[1, :], color=cmap(cval), alpha=0.1)
+        #     ax2.plot(pth[0, :], pth[1, :], color=[0.5, 0.5, 0.5], alpha=0.1)
+        #     ax3.plot(pth[0, snr_max], pth[1, snr_max], '.', color=cmap3(cval))
+        # cbar = fig.colorbar(sm, ax=ax1)
+        # cbar.set_label('Distance function [1]')
+        # cbar = fig.colorbar(sm3, ax=ax3)
+        # cbar.set_label('Distance function [1]')
+        # pyant.plotting.gain_heatmap(
+        #     radar.tx[0].beam, 
+        #     min_elevation=85.0, 
+        #     ax=ax2,
+        # )
+        # ax2.set_ylim(ax1.get_ylim())
+        # ax2.set_xlim(ax1.get_xlim())
 
-        for ax in [ax1, ax2, ax3]:
-            ax.set_xlabel('kx [1]')
-            ax.set_ylabel('ky [1]')
+        # for ax in [ax1, ax2, ax3]:
+        #     ax.set_xlabel('kx [1]')
+        #     ax.set_ylabel('ky [1]')
 
-        fig1.savefig(results_folder / f'sample_trajs.{args.format}')
-        plt.close(fig1)
-        fig2.savefig(results_folder / f'sample_trajs_gain.{args.format}')
-        plt.close(fig2)
-        fig3.savefig(results_folder / f'sample_peak_match.{args.format}')
-        plt.close(fig3)
+        # fig1.savefig(results_folder / f'sample_trajs.{args.format}')
+        # plt.close(fig1)
+        # fig2.savefig(results_folder / f'sample_trajs_gain.{args.format}')
+        # plt.close(fig2)
+        # fig3.savefig(results_folder / f'sample_peak_match.{args.format}')
+        # plt.close(fig3)
+
+        plt.close('all')
+        del data
+        del summary_data
+        del pths
 
         pbar.update(1)
     pbar.close()

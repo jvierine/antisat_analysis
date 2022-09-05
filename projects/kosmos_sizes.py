@@ -28,7 +28,7 @@ else:
     arg = ''
 
 min_gain_filter = 25.0  # dB
-filter_limit = 0.010
+filter_limit = 0.060
 
 TRUNC_ANALYSIS = False
 if arg.lower().strip() == 'trunc':
