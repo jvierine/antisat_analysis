@@ -770,6 +770,41 @@ for dual_ind in my_dual_inds:
         MPI = mcmc_mpi,
     )
 
+    deltas = post.kwargs['jacobian_delta']
+    if not isinstance(deltas, np.ndarray):
+        deltas = np.ones((len(post.variables),),
+                         dtype=np.float64)*deltas
+
+    Sigma_orb = post.linear_MAP_covariance(
+        mcmc_start, deltas, prior_cov_inv=None)
+
+    print(' === Linearized MAP covariance: === ')
+    print(Sigma_orb)
+    print(' - TLE coordinate stds: ')
+
+    orb_samps_lin = np.random.multivariate_normal(lsq_iod_state0, Sigma_orb, 10000)
+    orb_samps_lin = np.stack(orb_samps_lin).T
+
+    orb_samps_lin = od_prop._cart2sgp4_elems(orb_samps_lin)
+    orb_samps_lin[0, ...] *= 1e3  # km -> m
+    orb_samps_lin = orb_samps_lin[:, orb_samps_lin[1, :] < 1]
+    print('sample shape: ', orb_samps_lin.shape)
+    orb_lin_std = np.std(orb_samps_lin, axis=1)
+
+    tle_prop = prop.get_TLE_parameters(
+        dual_corrs['line1'][dual_ind], 
+        dual_corrs['line2'][dual_ind],
+    )
+    satnum = tle_prop['satnum']
+
+    orb_lin_std[0] *= 1e-3
+
+    _wr_string = f'{satnum}: ' + ','.join([f'{x:.3f}' for x in orb_lin_std[:4]]) + '\n'
+    print(_wr_string)
+    # with open('/home/danielk/Documents/tmp.txt', 'a') as f:
+    #     f.write(_wr_string)
+    # continue
+
     post_mcmc_path = out_pth / f'mcmc_results_dual_obj{dual_ind}.h5'
     if post_mcmc_path.is_file() and not clobber:
         post_results = odlab.PosteriorParameters.load_h5(post_mcmc_path)
