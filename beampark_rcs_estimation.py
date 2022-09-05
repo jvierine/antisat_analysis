@@ -55,6 +55,15 @@ Example execution:
 ./beampark_rcs_estimation.py estimate \
     --matches-plotted 3 --min-gain 10.0 --min-snr 15.0 \
     --inclination-samples 150 --anomaly-samples 100 \
+    --maximum-offaxis-angle 1.8 \
+    eiscat_uhf \
+    ~/data/spade/beamparks/uhf/2021.11.23/leo_bpark_2.1u_NO@uhf_extended/ \
+    ./projects/output/russian_asat/2021.11.23_uhf_rcs_trunc_gain \
+    --event uhf_20211123_123831_000000
+
+./beampark_rcs_estimation.py estimate \
+    --matches-plotted 3 --min-gain 10.0 --min-snr 15.0 \
+    --inclination-samples 150 --anomaly-samples 100 \
     eiscat_uhf \
     ~/data/spade/beamparks/uhf/2021.11.23/leo_bpark_2.1u_NO@uhf_extended/ \
     ./projects/output/russian_asat/2021.11.23_uhf_rcs \
@@ -359,14 +368,14 @@ def plot_match(
     )
     axes[0, 1].set_ylabel('Diameter [log10(cm)]')
 
-    interval = 0.2
+    interval = 0.4
 
     max_sn = np.argmax(sn_m)
     d_peak = diams[max_sn]*1e2
     if not (np.isnan(d_peak) or np.isinf(d_peak)):
         logd_peak = np.log10(d_peak)
         axes[0, 0].set_ylim(d_peak*(1 - interval), d_peak*(1 + interval))
-        axes[0, 1].set_ylim(logd_peak*(1 - interval), logd_peak*(1 + interval))
+        #axes[0, 1].set_ylim(logd_peak*(1 - interval), logd_peak*(1 + interval))
 
     axes[1, 0].set_xlabel('Time [s]')
 
