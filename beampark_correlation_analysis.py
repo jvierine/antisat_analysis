@@ -267,16 +267,16 @@ def main(input_args=None):
 
     if 'jitter_index' in metric.dtype.names:
         ji = metric['jitter_index']
+        if not np.all(np.isnan(ji)):
+            fig, ax = plt.subplots(1, 1, figsize=(15, 15))
+            ax.hist([ji.flatten()[select], ji.flatten()[not_select]], stacked=True)
+            ax.set_xlabel('Jitter index [1]')
+            ax.set_ylabel('Frequency [1]')
+            ax.set_title(title_str)
 
-        fig, ax = plt.subplots(1, 1, figsize=(15, 15))
-        ax.hist([ji.flatten()[select], ji.flatten()[not_select]], stacked=True)
-        ax.set_xlabel('Jitter index [1]')
-        ax.set_ylabel('Frequency [1]')
-        ax.set_title(title_str)
-
-        if out_path is not None:
-            fig.savefig(out_path / f'{name}_jitter.{args.format}')
-            plt.close(fig)
+            if out_path is not None:
+                fig.savefig(out_path / f'{name}_jitter.{args.format}')
+                plt.close(fig)
 
     if out_path is None:
         plt.show()

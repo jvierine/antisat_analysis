@@ -28,10 +28,17 @@ run this
 '''
 
 base_path = Path(__file__).parent
-tle_file = base_path/'projects'/'output'/'russian_asat'/'kosmos-1408-2021-11-15.tle'
+# tle_file = base_path/'projects'/'output'/'russian_asat'/'kosmos-1408-2021-11-15.tle'
+tle_file = [
+    (
+        '1 54236U 22151B   22319.31717231  .00000322  00000+0  17837-3 0  9998',
+        '2 54236  98.8227 324.3982 0028030 342.4420  17.5784 14.17951913   464',
+    )
+]
 
-output_folder = base_path/'projects'/'output'/'russian_asat'/'dual_beampark_planner'
-output_folder.mkdir(exist_ok=True)
+# output_folder = base_path/'projects'/'output'/'russian_asat'/'dual_beampark_planner'
+output_folder = base_path/'projects'/'output'/'CZ_6A_RB'/'dual_beampark_planner'
+output_folder.mkdir(parents=True, exist_ok=True)
 
 radars = [
     sorts.radars.eiscat_uhf,
@@ -42,18 +49,17 @@ names = [
     'EISCAT UHF',
     'EISCAT ESR',
 ]
-fixed_pointing = 0
-azimuth = 90.0
-elevation = 75.0
+fixed_pointing = 1
+azimuth = 185.5
+elevation = 82.1
 elevation_limits = [
-    70.0,
+    30.0,
 ]
 station_inds = [
     (0, 0),
     (0, 0),
 ]
 dt = 1.0
-target_t = 15*3600.0
 
 rotation_offset_limits = (0., 24*3600.0)
 rotation_offset_num = 24*60
@@ -217,7 +223,9 @@ for mind in range(len(minima_ind)):
     }
 
     for ri, radar in enumerate(radars):
-        enu = radar.tx[0].enu(ecef_states)
+        txi = station_inds[ri][0]
+        rxi = station_inds[ri][1]
+        enu = radar.tx[txi].enu(ecef_states)
         azel = pyant.coordinates.cart_to_sph(enu, radians=False)
         data['az'][ri] = np.mod(azel[0, :] + 360.0, 360)
         data['el'][ri] = azel[1, :]
@@ -234,11 +242,34 @@ for mind in range(len(minima_ind)):
     ax = fig.add_subplot(111, projection='3d')
     sorts.plotting.grid_earth(ax)
     for ri, radar in enumerate(radars):
-        ax.plot(radar.tx[0].ecef[0], radar.tx[0].ecef[1], radar.tx[0].ecef[2], 'or')
+        txi = station_inds[ri][0]
+        rxi = station_inds[ri][1]
+        ax.plot(radar.tx[txi].ecef[0], radar.tx[txi].ecef[1], radar.tx[txi].ecef[2], 'or')
+        if ri != fixed_pointing:
+            for elmi in range(len(data["el_maxima"][ri])):
+                rsph = np.array([
+                    data["az"][ri][data["el_maxima"][ri][elmi]], 
+                    data["el"][ri][data["el_maxima"][ri][elmi]],
+                    1,
+                ])
+                rp = pyant.coordinates.sph_to_cart(rsph, radians=False)
+                rp = sorts.frames.ecef_to_enu(
+                    radar.tx[txi].lat,
+                    radar.tx[txi].lon,
+                    radar.tx[txi].alt,
+                    rp,
+                    radians=False,
+                )
+                ax.plot(
+                    [radar.tx[txi].ecef[0], radar.tx[txi].ecef[0] + rp[0]*5000e3], 
+                    [radar.tx[txi].ecef[1], radar.tx[txi].ecef[1] + rp[1]*5000e3], 
+                    [radar.tx[txi].ecef[2], radar.tx[txi].ecef[2] + rp[2]*5000e3], 
+                    '--g',
+                )
     ax.plot(
-        [ecef_st[0], ecef_st[0] + ecef_point[0]*1000e3], 
-        [ecef_st[1], ecef_st[1] + ecef_point[1]*1000e3], 
-        [ecef_st[2], ecef_st[2] + ecef_point[2]*1000e3], 
+        [ecef_st[0], ecef_st[0] + ecef_point[0]*3000e3], 
+        [ecef_st[1], ecef_st[1] + ecef_point[1]*3000e3], 
+        [ecef_st[2], ecef_st[2] + ecef_point[2]*3000e3], 
         '-g',
     )
     ax.plot(ecef_states[0,:], ecef_states[1,:], ecef_states[2,:], '-b')
@@ -253,7 +284,7 @@ for mind in range(len(minima_ind)):
     subfigs = fig.subfigures(nrows=total_systems, ncols=1)
     for row, subfig in enumerate(subfigs):
 
-        addon = ' [FIXED]' if row == 0 else ''
+        addon = ' [FIXED]' if row == fixed_pointing else ''
         subfig.suptitle(f'{names[row]}{addon}')
 
         axes = subfig.subplots(nrows=1, ncols=2)
