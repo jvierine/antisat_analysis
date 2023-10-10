@@ -55,8 +55,7 @@ def main(input_args=None):
         "object_id",
         metavar="ID",
         type=str,
-        default=[],
-        nargs="?",
+        nargs="+",
         help='Input ID(s), ID variant can be set with "--type"',
     )
 
@@ -102,42 +101,61 @@ def main(input_args=None):
     else:
         print("Fetching all data")
 
-    session = requests.Session()
-    req = requests.Request(
-        "GET",
-        f"{URL}/api/objects",
+    response = requests.get(
+        f'{URL}/api/objects',
         headers={
-            "Authorization": f"Bearer {token}",
-            "DiscosWeb-Api-Version": "2",
+            'Authorization': f'Bearer {token}',
+            'DiscosWeb-Api-Version': '2',
         },
-        params=params,
+        params={
+            'filter': filt_str,
+        },
     )
-    objects = []
-    while True:
-        print("getting page ", current_page)
-        prepped = session.prepare_request(req)
-        connector = "?" if len(params) == 0 else "&"
-        prepped.url += f"{connector}page[number]={current_page}&page[size]=100"
 
-        response = session.send(prepped)
+    doc = response.json()
+    if response.ok:
+        print(f"{len(doc['data'])} Entries found...")
+        json.dump(doc['data'], args.output, indent=2)
+    else:
+        print('Error...')
+        print(doc['errors'])
 
-        if response.status_code == 429:
-            retry_interval = int(response.headers["Retry-After"])
-            print(f"API requests exceeded, sleeping for {retry_interval} s")
-            time.sleep(retry_interval + 1)
-            continue
-        else:
-            current_page += 1
+    # session = requests.Session()
+    # req = requests.Request(
+    #     "GET",
+    #     f"{URL}/api/objects",
+    #     headers={
+    #         "Authorization": f"Bearer {token}",
+    #         "DiscosWeb-Api-Version": "2",
+    #     },
+    #     params=params,
+    # )
+    # objects = []
+    # while True:
+    #     print("getting page ", current_page)
+    #     prepped = session.prepare_request(req)
+    #     connector = "?" if len(params) == 0 else "&"
+    #     prepped.url += f"{connector}page[number]={current_page}&page[size]=100"
 
-        if response.status_code != 200:
-            response.raise_for_status()
+    #     response = session.send(prepped)
 
-        result = response.json()
-        for obj in result["data"]:
-            objects.append(obj)
+    #     if response.status_code == 429:
+    #         retry_interval = int(response.headers["Retry-After"])
+    #         print(f"API requests exceeded, sleeping for {retry_interval} s")
+    #         time.sleep(retry_interval + 1)
+    #         continue
+    #     else:
+    #         current_page += 1
 
-        if "next" not in result["links"]:
-            break
+    #     if response.status_code != 200:
+    #         response.raise_for_status()
+
+    #     result = response.json()
+    #     for obj in result["data"]:
+    #         objects.append(obj)
+
+    #     if "next" not in result["links"]:
+    #         break
 
 
     # # print object data
@@ -158,8 +176,8 @@ def main(input_args=None):
     #         "{launchDate:11s}  {reentryEpoch:13s}  {country}".format(**object_)
     #     )
 
-    print(f"{len(objects)} Entries found...")
-    json.dump(objects, args.output, indent=2)
+    # print(f"{len(objects)} Entries found...")
+    # json.dump(objects, args.output, indent=2)
 
 
 if __name__ == "__main__":
