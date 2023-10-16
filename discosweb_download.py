@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import pathlib
 import sys
 import time
 import getpass
@@ -32,8 +33,7 @@ def main(input_args=None):
         "-o",
         "--output",
         nargs="?",
-        type=argparse.FileType("w"),
-        default=sys.stdout,
+        default="",
         help="Path to file where output should be written.",
     )
     parser.add_argument(
@@ -52,6 +52,11 @@ def main(input_args=None):
         help="File containing DISCOSweb token",
     )
     parser.add_argument(
+        "--override",
+        action="store_true",
+        help="Override output file",
+    )
+    parser.add_argument(
         "object_id",
         metavar="ID",
         type=str,
@@ -65,6 +70,17 @@ def main(input_args=None):
         args = parser.parse_args(input_args)
     if isinstance(args.object_id, str):
         args.object_id = [args.object_id]
+
+    if len(args.output) == 0:
+        output_pth = sys.stdout
+    else:
+        output_pth = pathlib.Path(args.output)
+        if output_pth.exists() and not args.override:
+            raise FileExistsError(f"{output_pth} exists")
+        elif output_pth.exists() and args.override:
+            print("Overriding existing file..")
+            output_pth.unlink()
+        output_pth = open(output_pth, "w")
 
     if args.type == "NORAD":
         tmp_oids = []
@@ -89,7 +105,10 @@ def main(input_args=None):
         token = getpass.getpass("API token for:")
 
     current_page = 1
-    params = {"sort": "id"}
+    params = {
+        "sort": "id",
+        "page[size]": 100,
+    }
     if len(args.object_id) > 0:
         oids = ",".join(args.object_id)
         if len(args.object_id) == 1:
@@ -101,83 +120,57 @@ def main(input_args=None):
     else:
         print("Fetching all data")
 
-    response = requests.get(
-        f'{URL}/api/objects',
-        headers={
-            'Authorization': f'Bearer {token}',
-            'DiscosWeb-Api-Version': '2',
-        },
-        params={
-            'filter': filt_str,
-        },
-    )
+    objs = []
+    while True:
+        print("getting page ", current_page)
+        params["page[number]"] = current_page
+        response = requests.get(
+            f"{URL}/api/objects",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "DiscosWeb-Api-Version": "2",
+            },
+            params=params,
+        )
 
-    doc = response.json()
-    if response.ok:
-        print(f"{len(doc['data'])} Entries found...")
-        json.dump(doc['data'], args.output, indent=2)
-    else:
-        print('Error...')
-        print(doc['errors'])
+        if response.status_code == 429:
+            retry_interval = int(response.headers["Retry-After"])
+            print(f"API requests exceeded, sleeping for {retry_interval} s")
+            time.sleep(retry_interval + 1)
+            continue
+        else:
+            current_page += 1
 
-    # session = requests.Session()
-    # req = requests.Request(
-    #     "GET",
-    #     f"{URL}/api/objects",
-    #     headers={
-    #         "Authorization": f"Bearer {token}",
-    #         "DiscosWeb-Api-Version": "2",
-    #     },
-    #     params=params,
-    # )
-    # objects = []
-    # while True:
-    #     print("getting page ", current_page)
-    #     prepped = session.prepare_request(req)
-    #     connector = "?" if len(params) == 0 else "&"
-    #     prepped.url += f"{connector}page[number]={current_page}&page[size]=100"
+        doc = response.json()
+        if response.ok:
+            objs += doc["data"]
+            print(f"{len(doc['data'])} Entries found...")
+            if doc["links"]["next"] is None:
+                print("No more pages, exiting...")
+                break
+        else:
+            print("Error...")
+            print(doc["errors"])
 
-    #     response = session.send(prepped)
-
-    #     if response.status_code == 429:
-    #         retry_interval = int(response.headers["Retry-After"])
-    #         print(f"API requests exceeded, sleeping for {retry_interval} s")
-    #         time.sleep(retry_interval + 1)
-    #         continue
-    #     else:
-    #         current_page += 1
-
-    #     if response.status_code != 200:
-    #         response.raise_for_status()
-
-    #     result = response.json()
-    #     for obj in result["data"]:
-    #         objects.append(obj)
-
-    #     if "next" not in result["links"]:
-    #         break
-
-
-    # # print object data
+    # print object data
     # print(
-    #     "SATNO  COSPAR ID    DISCOS ID  Name                       "
-    #     "Object class  Mass     Shape                     Length  "
-    #     "Height  Depth   Min Xsect  Avg Xsect  Max Xsect  "
-    #     "Launch Date  Re-entry Date  Country"
+    #     "SATNO  COSPAR ID  Name                     "
+    #     "Object class  Mass     Shape                 "
+    #     "Height  Depth   Min xSect  Avg xSect  Max xSect  "
     # )
-    # for object_ in objects:
-    #     if object_["reentryEpoch"] is None:
-    #         object_["reentryEpoch"] = "-"
+    # for obj in objs:
+    #     object_ = obj["attributes"]
     #     print(
-    #         "{satno:5d}  {cosparId:11s}  {discosId:9d}  {name:25s}  "
+    #         "{satno:5d}  {cosparId:11s}  {name:25s}  "
     #         "{objectClass:12s}  {mass:7.1f}  {shape:24s}  "
-    #         "{length:6.1f}  {height:6.1f}  {depth:6.1f}  "
-    #         "{xSectMin:9.1f}  {xSectAvg:9.1f}  {xSectMax:9.1f}  "
-    #         "{launchDate:11s}  {reentryEpoch:13s}  {country}".format(**object_)
+    #         "{height:6.1f}  {depth:6.1f}  "
+    #         "{xSectMin:9.1f}  {xSectAvg:9.1f}  {xSectMax:9.1f}  ".format(**object_)
     #     )
 
-    # print(f"{len(objects)} Entries found...")
-    # json.dump(objects, args.output, indent=2)
+    print(f"{len(objs)} Entries downloaded...")
+    json.dump(objs, output_pth, indent=2)
+    if len(args.output) > 0:
+        output_pth.close()
 
 
 if __name__ == "__main__":
